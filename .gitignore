@@ -5,7 +5,20 @@ build/
 dist/
 wheels/
 *.egg-info
+.ruff_cache
 
 # Virtual environments
 .venv
+
+# Agent skills
 .agents
+
+# Environment variables
+.env
+
+# Uploaded files
+uploads/
+
+# IDE
+.idea/
+.vscode/
