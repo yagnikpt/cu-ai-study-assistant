@@ -5,7 +5,7 @@ import streamlit as st
 import api_client
 
 # ── Load documents for selectors ────────────────────────
-doc_data = api_client.list_documents(status="completed", limit=100)
+doc_data = api_client.list_documents(status="ready", limit=100)
 all_docs = doc_data.get("documents", []) if isinstance(doc_data, dict) else doc_data
 doc_options = {"": "(none – topic-only search)"} | {
     str(d["id"]): d["original_filename"] for d in all_docs

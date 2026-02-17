@@ -22,7 +22,7 @@ def go_to(view: str, quiz: dict | None = None) -> None:
 
 # ── Generate quiz section ──────────────────────────────
 with st.expander("Generate a new quiz", icon=":material/add:", expanded=False):
-    doc_data = api_client.list_documents(status="completed", limit=100)
+    doc_data = api_client.list_documents(status="ready", limit=100)
     all_docs = doc_data.get("documents", []) if isinstance(doc_data, dict) else doc_data
     doc_options = {"": "(all documents)"} | {
         str(d["id"]): d["original_filename"] for d in all_docs

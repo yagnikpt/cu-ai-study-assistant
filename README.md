@@ -18,6 +18,7 @@ Google Gemini and semantic vector search.
 - [Database Schema](#database-schema)
 - [API Reference](#api-reference)
 - [Getting Started](#getting-started)
+- [Streamlit Dev UI](#streamlit-dev-ui)
 - [Configuration](#configuration)
 
 ---
@@ -91,10 +92,21 @@ The API follows a clean layered architecture:
 ```
 cu_study_assistant/
 |-- main.py                    # Uvicorn entry point
+|-- streamlit_app.py           # Streamlit dev UI entry point
+|-- api_client.py              # HTTP client (Streamlit -> FastAPI)
 |-- pyproject.toml             # Project config + dependencies
 |-- docker-compose.yml         # PostgreSQL + pgvector service
 |-- alembic.ini                # Alembic config
 |-- .env.example               # Environment variable template
+|
+|-- .streamlit/
+|   +-- config.toml            # Streamlit theme & server config
+|
+|-- app_pages/                 # Streamlit page modules
+|   |-- documents.py           # Upload, list, inspect, tag documents
+|   |-- qa.py                  # Chat-style RAG Q&A
+|   |-- summaries.py           # Generate summaries
+|   +-- quizzes.py             # Generate, take, and review quizzes
 |
 |-- alembic/
 |   |-- env.py                 # Migration runner (reads app config)
@@ -514,6 +526,73 @@ curl -X POST http://localhost:8000/api/v1/qa/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What are the main topics covered?"}'
 ```
+
+---
+
+## Streamlit Dev UI
+
+A multi-page Streamlit app is included for interactive testing of all backend
+features. It talks to the FastAPI server over HTTP.
+
+### Running the UI
+
+Make sure the FastAPI backend is running first (step 5 above), then in a separate
+terminal:
+
+```bash
+uv run streamlit run streamlit_app.py
+```
+
+This opens the app at `http://localhost:8501`.
+
+### Pages
+
+| Page | What it does |
+|------|-------------|
+| **Documents** | Upload PDFs with optional course/subject metadata. Lists all documents with status indicators, page count, chunk count, and file size. Expand any document to view its extracted chunks. Create and manage tags. |
+| **Q&A** | Chat-style interface for asking questions about your documents. Select specific documents to scope the search or leave empty to search all. Adjustable `top_k` slider. Each answer includes expandable source citations with page numbers and relevance scores. |
+| **Summaries** | Generate summaries by topic, by document, by page range, or any combination. Choose detail level (brief / standard / detailed). Output is rendered as markdown with source references. |
+| **Quizzes** | Generate MCQ and/or short-answer quizzes from your documents. Take quizzes with radio buttons and text inputs. Submit for instant grading with score metrics, per-question feedback, correct answers, and explanations. View aggregated results and topic strength analysis. |
+
+### Architecture
+
+```
+Browser (localhost:8501)
+    |
+    v
+Streamlit App (streamlit_app.py)
+    |  uses api_client.py (httpx)
+    v
+FastAPI Backend (localhost:8000)
+    |
+    v
+PostgreSQL + pgvector + Gemini API
+```
+
+- `streamlit_app.py` -- entry point, sets up `st.navigation` with sidebar, shows
+  backend health status
+- `api_client.py` -- thin httpx wrapper with functions for every API endpoint,
+  includes error handling via `st.error()` / `st.stop()`
+- `app_pages/*.py` -- individual page modules, no `st.title()` calls (handled by
+  the entry point)
+
+### Sidebar
+
+The sidebar shows:
+- Navigation links to all four pages
+- A live backend health indicator (green = DB + Gemini connected, yellow = partial,
+  red = unreachable)
+- Page-specific controls (e.g. document scope selector and top_k slider on Q&A)
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "Backend: unreachable" in sidebar | FastAPI server not running | Start the backend: `uv run python main.py` |
+| "API error (500)" on any page | Usually a status filter mismatch or backend exception | Check the FastAPI terminal for the traceback |
+| Document stuck in "processing" | Background ingestion may have failed silently | Check document detail for `error_message`; check FastAPI logs |
+| Q&A returns empty or generic answer | No documents in "ready" status | Upload a PDF and wait for status to change to "ready" |
+| Quizzes page shows no quizzes | No quizzes generated yet | Use the "Generate a new quiz" expander at the top |
 
 ---
 

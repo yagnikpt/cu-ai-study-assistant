@@ -38,8 +38,8 @@ with st.sidebar:
         import api_client
 
         h = api_client.health()
-        db_ok = h.get("database") == "healthy"
-        gemini_ok = h.get("gemini") == "healthy"
+        db_ok = h.get("database") == "connected"
+        gemini_ok = h.get("gemini_configured") is True
         if db_ok and gemini_ok:
             st.success("Backend: connected", icon=":material/check_circle:")
         else:

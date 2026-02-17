@@ -11,7 +11,7 @@ st.session_state.setdefault("messages", [])
 with st.sidebar:
     st.subheader("Q&A Settings")
     # Load documents for scope selector
-    doc_data = api_client.list_documents(status="completed", limit=100)
+    doc_data = api_client.list_documents(status="ready", limit=100)
     all_docs = doc_data.get("documents", []) if isinstance(doc_data, dict) else doc_data
 
     doc_options = {str(d["id"]): d["original_filename"] for d in all_docs}

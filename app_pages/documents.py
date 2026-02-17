@@ -42,7 +42,7 @@ with st.expander("Filters", icon=":material/filter_list:"):
     with fc3:
         f_status = st.selectbox(
             "Status",
-            ["all", "pending", "processing", "completed", "failed"],
+            ["all", "processing", "ready", "failed"],
             key="doc_filter_status",
         )
 
@@ -65,9 +65,8 @@ if not docs:
 else:
     for doc in docs:
         status_icon = {
-            "completed": ":material/check_circle:",
+            "ready": ":material/check_circle:",
             "processing": ":material/sync:",
-            "pending": ":material/schedule:",
             "failed": ":material/error:",
         }.get(doc["status"], ":material/help:")
 
