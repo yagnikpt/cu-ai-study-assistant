@@ -6,6 +6,7 @@ import type {
 	DocumentListParams,
 	DocumentListResponse,
 	DocumentTagsUpdateRequest,
+	QAStreamEvent,
 	Quiz,
 	QuizAttemptRequest,
 	QuizAttemptResponse,
@@ -16,6 +17,7 @@ import type {
 	SearchResponse,
 	SummaryRequest,
 	SummaryResponse,
+	SummaryStreamEvent,
 	Tag,
 	TagCreateRequest,
 } from "./types";
@@ -203,6 +205,104 @@ export async function generateSummary(
 		signal: timeoutSignal(),
 	});
 	return handle<SummaryResponse>(resp);
+}
+
+// ── SSE Streaming ─────────────────────────────────────
+
+/**
+ * Parse an SSE text/event-stream into typed events.
+ *
+ * Each SSE frame has the shape:
+ *   event: <type>\n
+ *   data: <json>\n\n
+ *
+ * The callback fires once per parsed event.
+ */
+async function consumeSSE<T extends { type: string; data?: any }>(
+	resp: Response,
+	onEvent: (event: T) => void,
+): Promise<void> {
+	if (!resp.ok) {
+		let detail: string;
+		try {
+			const body = await resp.json();
+			detail = body.detail ?? resp.statusText;
+		} catch {
+			detail = resp.statusText;
+		}
+		throw new ApiError(resp.status, detail);
+	}
+
+	const reader = resp.body?.getReader();
+	if (!reader) throw new Error("Response body is not readable");
+
+	const decoder = new TextDecoder();
+	let buffer = "";
+
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+
+		buffer += decoder.decode(value, { stream: true });
+
+		// Split on double newlines (SSE frame boundary)
+		let boundary: number;
+		while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+			const frame = buffer.slice(0, boundary);
+			buffer = buffer.slice(boundary + 2);
+
+			let eventType = "";
+			let eventData = "";
+
+			for (const line of frame.split("\n")) {
+				if (line.startsWith("event: ")) {
+					eventType = line.slice(7);
+				} else if (line.startsWith("data: ")) {
+					eventData = line.slice(6);
+				}
+			}
+
+			if (eventType && eventData) {
+				onEvent({ type: eventType, data: JSON.parse(eventData) } as T);
+			}
+		}
+	}
+}
+
+/**
+ * Stream a Q&A answer via SSE.
+ * Calls `onEvent` for each SSE event (sources → token* → done).
+ */
+export async function askQuestionStream(
+	data: AskRequest,
+	onEvent: (event: QAStreamEvent) => void,
+	signal?: AbortSignal,
+): Promise<void> {
+	const resp = await fetch(url("/qa/ask/stream"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+		signal: signal ?? timeoutSignal(300_000),
+	});
+	await consumeSSE<QAStreamEvent>(resp, onEvent);
+}
+
+/**
+ * Stream a summary via SSE.
+ * Calls `onEvent` for each SSE event (meta → token* → done).
+ */
+export async function generateSummaryStream(
+	data: SummaryRequest,
+	onEvent: (event: SummaryStreamEvent) => void,
+	signal?: AbortSignal,
+): Promise<void> {
+	const resp = await fetch(url("/summaries/generate/stream"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+		signal: signal ?? timeoutSignal(300_000),
+	});
+	await consumeSSE<SummaryStreamEvent>(resp, onEvent);
 }
 
 // ── Quizzes ────────────────────────────────────────────

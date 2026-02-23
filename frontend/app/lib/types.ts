@@ -136,6 +136,53 @@ export interface SummaryResponse {
 	model: string;
 }
 
+// ── Q&A SSE Events ────────────────────────────────────
+
+/** First event — array of source references */
+export interface QASourcesEvent {
+	type: "sources";
+	data: SourceReference[];
+}
+
+/** Repeated — each text fragment */
+export interface QATokenEvent {
+	type: "token";
+	data: string;
+}
+
+/** Final event */
+export interface QADoneEvent {
+	type: "done";
+	data: { model: string };
+}
+
+export type QAStreamEvent = QASourcesEvent | QATokenEvent | QADoneEvent;
+
+// ── Summary SSE Events ────────────────────────────────
+
+/** First event — topic + sources */
+export interface SummaryMetaEvent {
+	type: "meta";
+	data: { topic: string; sources: SummarySource[] };
+}
+
+/** Repeated — each text fragment */
+export interface SummaryTokenEvent {
+	type: "token";
+	data: string;
+}
+
+/** Final event */
+export interface SummaryDoneEvent {
+	type: "done";
+	data: { model: string };
+}
+
+export type SummaryStreamEvent =
+	| SummaryMetaEvent
+	| SummaryTokenEvent
+	| SummaryDoneEvent;
+
 // ── Quizzes ────────────────────────────────────────────
 
 export type QuestionType = "mcq" | "short_answer";

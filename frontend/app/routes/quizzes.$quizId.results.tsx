@@ -95,9 +95,9 @@ export default function QuizResultsPage() {
 			</div>
 
 			{/* Score overview */}
-			<div className="grid grid-cols-3 gap-3">
+			<div className="grid md:grid-cols-3 gap-3">
 				<Card>
-					<CardContent className="pt-6 text-center">
+					<CardContent className="text-center">
 						<p className="text-3xl font-bold tabular-nums">
 							{data.best_score.toFixed(0)}%
 						</p>
@@ -108,7 +108,7 @@ export default function QuizResultsPage() {
 					</CardContent>
 				</Card>
 				<Card>
-					<CardContent className="pt-6 text-center">
+					<CardContent className="text-center">
 						<p className="text-3xl font-bold tabular-nums">
 							{data.attempts_count}
 						</p>
@@ -116,7 +116,7 @@ export default function QuizResultsPage() {
 					</CardContent>
 				</Card>
 				<Card>
-					<CardContent className="pt-6 text-center">
+					<CardContent className="text-center">
 						<p className="text-3xl font-bold tabular-nums">
 							{data.topic_strengths.length}
 						</p>

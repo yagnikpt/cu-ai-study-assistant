@@ -4,8 +4,10 @@ Takes a topic or document section and generates structured educational
 summaries with citations to source material.
 """
 
+import json
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 
 from google import genai
 
@@ -35,37 +37,28 @@ Your summaries should:
 Output format: Markdown with proper headers (##, ###), bullet points, and inline citations.
 """
 
+DETAIL_INSTRUCTIONS = {
+    "brief": "Create a concise summary (3-5 key points) of the topic.",
+    "standard": "Create a comprehensive summary covering all major concepts, with examples where available.",
+    "detailed": "Create a thorough, detailed summary. Include all concepts, sub-topics, examples, formulas, and definitions found in the source material.",
+}
 
-async def generate_summary(
+
+async def _retrieve_chunks(
     db: AsyncSession,
     topic: str | None = None,
     document_id: uuid.UUID | None = None,
     page_start: int | None = None,
     page_end: int | None = None,
-    detail_level: str = "standard",
-) -> dict:
-    """Generate a structured summary from course materials.
+) -> tuple[list[dict], str]:
+    """Shared chunk retrieval for both streaming and non-streaming.
 
-    Can work in two modes:
-    1. Topic-based: Search for relevant chunks across documents.
-    2. Document-based: Summarize specific pages of a document.
-
-    Args:
-        db: Async database session.
-        topic: Topic to summarize (used for vector search).
-        document_id: Specific document to summarize from.
-        page_start: Start page for document-based summary.
-        page_end: End page for document-based summary.
-        detail_level: 'brief', 'standard', or 'detailed'.
-
-    Returns:
-        Dict with 'summary' (markdown), 'topic', 'sources', and 'model'.
+    Returns (chunks, effective_topic).
     """
     chunks: list[dict] = []
     effective_topic = topic or "General summary"
 
     if document_id and page_start is not None and page_end is not None:
-        # Mode 2: Direct page range retrieval
         query = (
             select(DocumentChunk, Document.original_filename)
             .join(Document, DocumentChunk.document_id == Document.id)
@@ -92,14 +85,12 @@ async def generate_summary(
             )
 
         if not effective_topic or effective_topic == "General summary":
-            # Try to derive topic from the chunks
             sections = [c["section_title"] for c in chunks if c.get("section_title")]
             effective_topic = (
                 sections[0] if sections else f"Pages {page_start}-{page_end}"
             )
 
     elif topic:
-        # Mode 1: Topic-based vector search
         query_embedding = await embed_query(topic)
         doc_ids = [document_id] if document_id else None
         chunks = await search_similar_chunks(
@@ -113,15 +104,13 @@ async def generate_summary(
             "Either 'topic' or 'document_id' with page range must be provided."
         )
 
-    if not chunks:
-        return {
-            "summary": "No relevant source material was found for this topic.",
-            "topic": effective_topic,
-            "sources": [],
-            "model": settings.generation_model,
-        }
+    return chunks, effective_topic
 
-    # Build context from chunks
+
+def _build_summary_prompt(
+    chunks: list[dict], effective_topic: str, detail_level: str
+) -> str:
+    """Build the user prompt from chunks, topic, and detail level."""
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
         pages = (
@@ -139,23 +128,66 @@ async def generate_summary(
 
     context = "\n\n---\n\n".join(context_parts)
 
-    # Adjust prompt based on detail level
-    detail_instructions = {
-        "brief": "Create a concise summary (3-5 key points) of the topic.",
-        "standard": "Create a comprehensive summary covering all major concepts, with examples where available.",
-        "detailed": "Create a thorough, detailed summary. Include all concepts, sub-topics, examples, formulas, and definitions found in the source material.",
-    }
+    return f"""Create a structured educational summary about: {effective_topic}
 
-    user_prompt = f"""Create a structured educational summary about: {effective_topic}
-
-{detail_instructions.get(detail_level, detail_instructions["standard"])}
+{DETAIL_INSTRUCTIONS.get(detail_level, DETAIL_INSTRUCTIONS["standard"])}
 
 SOURCE MATERIAL:
 {context}
 
 Generate the summary in markdown format with proper citations."""
 
-    # Generate with Gemini
+
+def _build_source_list(chunks: list[dict]) -> list[dict]:
+    """Build source list from chunks."""
+    sources = []
+    for chunk in chunks:
+        pages = (
+            f"p.{chunk['page_start']}"
+            if chunk["page_start"] == chunk["page_end"]
+            else f"pp.{chunk['page_start']}-{chunk['page_end']}"
+        )
+        sources.append(
+            {
+                "document_name": chunk["document_name"],
+                "pages": pages,
+                "chunk_id": str(chunk["chunk_id"]),
+            }
+        )
+    return sources
+
+
+async def generate_summary(
+    db: AsyncSession,
+    topic: str | None = None,
+    document_id: uuid.UUID | None = None,
+    page_start: int | None = None,
+    page_end: int | None = None,
+    detail_level: str = "standard",
+) -> dict:
+    """Generate a structured summary from course materials.
+
+    Can work in two modes:
+    1. Topic-based: Search for relevant chunks across documents.
+    2. Document-based: Summarize specific pages of a document.
+
+    Returns:
+        Dict with 'summary' (markdown), 'topic', 'sources', and 'model'.
+    """
+    chunks, effective_topic = await _retrieve_chunks(
+        db, topic, document_id, page_start, page_end
+    )
+
+    if not chunks:
+        return {
+            "summary": "No relevant source material was found for this topic.",
+            "topic": effective_topic,
+            "sources": [],
+            "model": settings.generation_model,
+        }
+
+    user_prompt = _build_summary_prompt(chunks, effective_topic, detail_level)
+
     client = genai.Client(api_key=settings.gemini_api_key)
     response = client.models.generate_content(
         model=settings.generation_model,
@@ -168,22 +200,7 @@ Generate the summary in markdown format with proper citations."""
     )
 
     summary = response.text or "Unable to generate summary."
-
-    # Build source list
-    sources = []
-    for chunk in chunks:
-        pages = (
-            f"p.{chunk['page_start']}"
-            if chunk["page_start"] == chunk["page_end"]
-            else f"pp.{chunk['page_start']}-{chunk['page_end']}"
-        )
-        sources.append(
-            {
-                "document_name": chunk["document_name"],
-                "pages": pages,
-                "chunk_id": chunk["chunk_id"],
-            }
-        )
+    sources = _build_source_list(chunks)
 
     logger.info(f"Generated {detail_level} summary for topic: {effective_topic}")
 
@@ -193,3 +210,63 @@ Generate the summary in markdown format with proper citations."""
         "sources": sources,
         "model": settings.generation_model,
     }
+
+
+async def generate_summary_stream(
+    db: AsyncSession,
+    topic: str | None = None,
+    document_id: uuid.UUID | None = None,
+    page_start: int | None = None,
+    page_end: int | None = None,
+    detail_level: str = "standard",
+) -> AsyncGenerator[str, None]:
+    """Stream a summary as SSE events.
+
+    Yields SSE-formatted strings:
+      event: meta\ndata: <json>\n\n       (topic + sources, sent first)
+      event: token\ndata: <json>\n\n      (for each text chunk)
+      event: done\ndata: <json>\n\n       (sent last)
+    """
+    chunks, effective_topic = await _retrieve_chunks(
+        db, topic, document_id, page_start, page_end
+    )
+
+    if not chunks:
+        meta = {
+            "topic": effective_topic,
+            "sources": [],
+        }
+        yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+        yield f"event: token\ndata: {json.dumps('No relevant source material was found for this topic.')}\n\n"
+        yield f"event: done\ndata: {json.dumps({'model': settings.generation_model})}\n\n"
+        return
+
+    sources = _build_source_list(chunks)
+
+    # Emit metadata (topic + sources) first
+    meta = {
+        "topic": effective_topic,
+        "sources": sources,
+    }
+    yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+
+    # Stream generation
+    user_prompt = _build_summary_prompt(chunks, effective_topic, detail_level)
+    client = genai.Client(api_key=settings.gemini_api_key)
+    stream = await client.aio.models.generate_content_stream(
+        model=settings.generation_model,
+        contents=user_prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=SUMMARY_SYSTEM_PROMPT,
+            temperature=0.4,
+            max_output_tokens=4096,
+        ),
+    )
+
+    async for chunk in stream:
+        text = chunk.text
+        if text:
+            yield f"event: token\ndata: {json.dumps(text)}\n\n"
+
+    yield f"event: done\ndata: {json.dumps({'model': settings.generation_model})}\n\n"
+    logger.info(f"Streamed {detail_level} summary for topic: {effective_topic}")

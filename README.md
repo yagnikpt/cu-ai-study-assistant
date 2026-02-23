@@ -8,8 +8,10 @@ structured summaries, and quiz yourself -- powered by Google Gemini and pgvector
 
 - **Document ingestion** -- upload PDFs, automatically chunked with paragraph/heading
   awareness, embedded via Gemini, and indexed with HNSW for fast vector search
-- **RAG Q&A** -- ask questions and get cited answers grounded in your documents
-- **Summaries** -- generate brief/standard/detailed summaries by topic or page range
+- **RAG Q&A** -- ask questions and get cited answers grounded in your documents,
+  streamed token-by-token via SSE for instant feedback
+- **Summaries** -- generate brief/standard/detailed summaries by topic or page range,
+  with real-time SSE streaming
 - **Quizzes** -- auto-generate MCQ and short-answer quizzes, take them, get graded
   with per-question feedback and topic strength analysis
 
@@ -19,7 +21,7 @@ structured summaries, and quiz yourself -- powered by Google Gemini and pgvector
 Browser (localhost:5173)
     |
     v
-React SPA  ──(REST)──>  FastAPI Backend  ──>  PostgreSQL 17 + pgvector
+React SPA  ──(REST+SSE)──>  FastAPI Backend  ──>  PostgreSQL 17 + pgvector
 (React Router 7,         (async, py3.13)      (HNSW vector index)
  shadcn/ui,                   |
  TanStack Query)              v
@@ -63,8 +65,8 @@ cu_study_assistant/
         |-- routes.ts               # Route definitions
         |-- components/layout.tsx   # Sidebar (offcanvas mobile, fixed desktop)
         |-- components/ui/          # 20 shadcn/ui components
-        |-- lib/api.ts              # Typed fetch wrappers (21 endpoints)
-        |-- lib/types.ts            # TS interfaces mirroring backend schemas
+        |-- lib/api.ts              # Typed fetch wrappers + SSE stream consumers
+        |-- lib/types.ts            # TS interfaces mirroring backend schemas + SSE events
         +-- routes/                 # documents, qa, summaries, quizzes,
                                     # quizzes.$quizId.take, quizzes.$quizId.results
 ```
@@ -137,14 +139,17 @@ Upload PDF -> Save to disk (status: "processing")
 Question -> Embed query (768-dim)
   -> pgvector cosine similarity search (top-k chunks, optional doc filter)
   -> Build prompt (system: cite sources, use markdown, be educational)
-  -> Gemini generation (temp=0.3)
-  -> Answer with inline [Source: file, p.X] citations
+  -> Gemini async streaming generation (temp=0.3)
+  -> SSE: sources event -> token events (progressive) -> done event
+  -> Frontend renders markdown progressively as tokens arrive
 ```
 
 ### Summaries
 
 Two modes: **topic-based** (embed topic, search all docs) or **page-range**
-(direct DB query). Detail levels: brief, standard, detailed.
+(direct DB query). Detail levels: brief, standard, detailed. Both Q&A and
+summaries stream via SSE -- sources/metadata are sent first so the UI can
+display them while tokens are still arriving.
 
 ### Quizzes
 
@@ -170,13 +175,40 @@ All under `/api/v1/`. Full Swagger UI at `/docs`.
 | `GET` | `/tags/` | List tags. |
 | `DELETE` | `/tags/{id}` | Delete tag. |
 | `POST` | `/qa/ask` | Ask question. Returns cited answer. |
+| `POST` | `/qa/ask/stream` | Ask question (SSE stream: sources, tokens, done). |
 | `POST` | `/qa/search` | Semantic search only (no LLM). |
 | `POST` | `/summaries/generate` | Generate summary (topic/page-range). |
+| `POST` | `/summaries/generate/stream` | Generate summary (SSE stream: meta, tokens, done). |
 | `POST` | `/quizzes/generate` | Generate quiz. |
 | `GET` | `/quizzes/` | List quizzes. |
 | `GET` | `/quizzes/{id}` | Get quiz (answers hidden). |
 | `POST` | `/quizzes/{id}/attempt` | Submit answers, get grading. |
 | `GET` | `/quizzes/{id}/results` | Aggregated results + topic analysis. |
+
+### SSE Streaming Protocol
+
+The `/stream` endpoints use `text/event-stream` (Server-Sent Events). Each frame
+has an `event` type and a `data` payload (JSON).
+
+**Q&A stream** (`/qa/ask/stream`):
+
+| Order | Event | Payload | Description |
+|-------|-------|---------|-------------|
+| 1 | `sources` | `SourceReference[]` | Retrieved sources (sent before generation starts) |
+| 2..n | `token` | `string` | Text fragment from the LLM |
+| last | `done` | `{ model }` | Generation complete |
+
+**Summary stream** (`/summaries/generate/stream`):
+
+| Order | Event | Payload | Description |
+|-------|-------|---------|-------------|
+| 1 | `meta` | `{ topic, sources }` | Topic + source list (sent before generation) |
+| 2..n | `token` | `string` | Text fragment from the LLM |
+| last | `done` | `{ model }` | Generation complete |
+
+The frontend uses `fetch()` + `ReadableStream` to consume these events,
+progressively rendering markdown as tokens arrive. Both pages support
+aborting mid-stream via a Stop button.
 
 ## Database Schema
 
@@ -200,7 +232,7 @@ B-tree indexes on FKs/status/dates, auto-update trigger on `documents.updated_at
 | `DATABASE_URL` | `postgresql+asyncpg://...localhost:5433/study_assistant` | DB connection |
 | `GEMINI_API_KEY` | *(required)* | Gemini API key |
 | `EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
-| `GENERATION_MODEL` | `gemini-2.0-flash` | Generation model |
+| `GENERATION_MODEL` | `gemini-2.5-flash-lite` | Generation model |
 | `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 | `CHUNK_SIZE` | `700` | Tokens per chunk |
 | `CHUNK_OVERLAP` | `100` | Overlap tokens |

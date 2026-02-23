@@ -4,8 +4,10 @@ Retrieves relevant document chunks via vector search, constructs a
 grounded prompt, and generates answers using Gemini with source citations.
 """
 
+import json
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 
 from google import genai
 
@@ -52,6 +54,54 @@ def _build_context_prompt(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 
+def _build_source_dicts(chunks: list[dict]) -> list[dict]:
+    """Build source reference dicts from retrieved chunks."""
+    sources = []
+    for chunk in chunks:
+        sources.append(
+            {
+                "chunk_id": str(chunk["chunk_id"]),
+                "document_id": str(chunk["document_id"]),
+                "document_name": chunk["document_name"],
+                "page_start": chunk["page_start"],
+                "page_end": chunk["page_end"],
+                "section_title": chunk.get("section_title"),
+                "relevance_score": chunk["score"],
+                "text_preview": chunk["content"][:200] + "..."
+                if len(chunk["content"]) > 200
+                else chunk["content"],
+            }
+        )
+    return sources
+
+
+async def _retrieve_and_build_prompt(
+    db: AsyncSession,
+    question: str,
+    document_ids: list[uuid.UUID] | None = None,
+    top_k: int = 5,
+) -> tuple[list[dict], str]:
+    """Shared retrieval + prompt construction for both streaming and non-streaming."""
+    query_embedding = await embed_query(question)
+    chunks = await search_similar_chunks(
+        db=db,
+        query_embedding=query_embedding,
+        top_k=top_k,
+        document_ids=document_ids,
+    )
+    context = _build_context_prompt(chunks)
+    user_prompt = f"""Based on the following source material, answer the student's question.
+
+SOURCE MATERIAL:
+{context}
+
+STUDENT'S QUESTION:
+{question}
+
+Provide a clear, well-structured answer with source citations."""
+    return chunks, user_prompt
+
+
 async def ask_question(
     db: AsyncSession,
     question: str,
@@ -69,37 +119,17 @@ async def ask_question(
     Returns:
         Dict with 'answer', 'sources', and 'model'.
     """
-    # Step 1: Embed the question
-    query_embedding = await embed_query(question)
-
-    # Step 2: Retrieve relevant chunks
-    chunks = await search_similar_chunks(
-        db=db,
-        query_embedding=query_embedding,
-        top_k=top_k,
-        document_ids=document_ids,
+    chunks, user_prompt = await _retrieve_and_build_prompt(
+        db, question, document_ids, top_k
     )
 
-    # Step 3: Build the prompt
-    context = _build_context_prompt(chunks)
-    user_prompt = f"""Based on the following source material, answer the student's question.
-
-SOURCE MATERIAL:
-{context}
-
-STUDENT'S QUESTION:
-{question}
-
-Provide a clear, well-structured answer with source citations."""
-
-    # Step 4: Generate answer with Gemini
     client = genai.Client(api_key=settings.gemini_api_key)
     response = client.models.generate_content(
         model=settings.generation_model,
         contents=user_prompt,
         config=genai.types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            temperature=0.3,  # Low temperature for factual accuracy
+            temperature=0.3,
             max_output_tokens=2048,
         ),
     )
@@ -109,24 +139,7 @@ Provide a clear, well-structured answer with source citations."""
         or "I was unable to generate an answer. Please try rephrasing your question."
     )
 
-    # Step 5: Build source references
-    sources = []
-    for chunk in chunks:
-        sources.append(
-            {
-                "chunk_id": chunk["chunk_id"],
-                "document_id": chunk["document_id"],
-                "document_name": chunk["document_name"],
-                "page_start": chunk["page_start"],
-                "page_end": chunk["page_end"],
-                "section_title": chunk.get("section_title"),
-                "relevance_score": chunk["score"],
-                "text_preview": chunk["content"][:200] + "..."
-                if len(chunk["content"]) > 200
-                else chunk["content"],
-            }
-        )
-
+    sources = _build_source_dicts(chunks)
     logger.info(f"Q&A: answered question with {len(sources)} sources")
 
     return {
@@ -134,3 +147,45 @@ Provide a clear, well-structured answer with source citations."""
         "sources": sources,
         "model": settings.generation_model,
     }
+
+
+async def ask_question_stream(
+    db: AsyncSession,
+    question: str,
+    document_ids: list[uuid.UUID] | None = None,
+    top_k: int = 5,
+) -> AsyncGenerator[str, None]:
+    """Stream a RAG answer as SSE events.
+
+    Yields SSE-formatted strings:
+      event: sources\ndata: <json>\n\n   (sent first)
+      event: token\ndata: <json>\n\n     (for each text chunk)
+      event: done\ndata: <json>\n\n      (sent last)
+    """
+    chunks, user_prompt = await _retrieve_and_build_prompt(
+        db, question, document_ids, top_k
+    )
+
+    # Emit sources first so the client has them while tokens stream
+    sources = _build_source_dicts(chunks)
+    yield f"event: sources\ndata: {json.dumps(sources)}\n\n"
+
+    # Stream generation
+    client = genai.Client(api_key=settings.gemini_api_key)
+    stream = await client.aio.models.generate_content_stream(
+        model=settings.generation_model,
+        contents=user_prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.3,
+            max_output_tokens=2048,
+        ),
+    )
+
+    async for chunk in stream:
+        text = chunk.text
+        if text:
+            yield f"event: token\ndata: {json.dumps(text)}\n\n"
+
+    yield f"event: done\ndata: {json.dumps({'model': settings.generation_model})}\n\n"
+    logger.info(f"Q&A: streamed answer with {len(sources)} sources")

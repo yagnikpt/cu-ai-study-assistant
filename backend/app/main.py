@@ -1,14 +1,14 @@
 """FastAPI application setup with lifespan management."""
 
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import documents, tags, qa, summaries, quizzes
+from app.routers import documents, qa, quizzes, summaries, tags
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +62,7 @@ app.add_middleware(
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",  # CRA / other dev server
         "http://localhost:8501",  # Streamlit
+        "*",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -83,8 +84,9 @@ async def root():
 @app.get("/health", tags=["health"])
 async def health():
     """Detailed health check."""
-    from app.database import engine
     from sqlalchemy import text
+
+    from app.database import engine
 
     try:
         async with engine.connect() as conn:

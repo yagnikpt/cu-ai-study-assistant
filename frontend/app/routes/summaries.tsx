@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, Loader2, Square } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -26,13 +26,112 @@ import {
 	SelectValue,
 } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
-import { generateSummary, listDocuments } from "~/lib/api";
-import type { DetailLevel, SummaryResponse } from "~/lib/types";
+import { generateSummaryStream, listDocuments } from "~/lib/api";
+import type { DetailLevel, SummarySource, SummaryStreamEvent } from "~/lib/types";
+
+// ── Streaming result state ─────────────────────────────
+
+interface StreamingResult {
+	summary: string;
+	topic: string;
+	sources: SummarySource[];
+	model: string | null;
+	isStreaming: boolean;
+}
+
+const EMPTY_RESULT: StreamingResult = {
+	summary: "",
+	topic: "",
+	sources: [],
+	model: null,
+	isStreaming: false,
+};
 
 // ── Main Page ──────────────────────────────────────────
 
 export default function SummariesPage() {
-	const [result, setResult] = useState<SummaryResponse | null>(null);
+	const [result, setResult] = useState<StreamingResult | null>(null);
+	const [isStreaming, setIsStreaming] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const abortRef = useRef<AbortController | null>(null);
+
+	const handleStream = useCallback(
+		(params: {
+			topic?: string;
+			document_id?: string;
+			page_start?: number;
+			page_end?: number;
+			detail_level: DetailLevel;
+		}) => {
+			setError(null);
+			setIsStreaming(true);
+			setResult({ ...EMPTY_RESULT, isStreaming: true });
+
+			const abort = new AbortController();
+			abortRef.current = abort;
+
+			generateSummaryStream(
+				{
+					topic: params.topic || undefined,
+					document_id: params.document_id || undefined,
+					page_start: params.page_start,
+					page_end: params.page_end,
+					detail_level: params.detail_level,
+				},
+				(event: SummaryStreamEvent) => {
+					switch (event.type) {
+						case "meta":
+							setResult((prev) =>
+								prev
+									? {
+											...prev,
+											topic: event.data.topic,
+											sources: event.data.sources,
+										}
+									: null,
+							);
+							break;
+						case "token":
+							setResult((prev) =>
+								prev
+									? { ...prev, summary: prev.summary + event.data }
+									: null,
+							);
+							break;
+						case "done":
+							setResult((prev) =>
+								prev
+									? {
+											...prev,
+											model: event.data.model,
+											isStreaming: false,
+										}
+									: null,
+							);
+							break;
+					}
+				},
+				abort.signal,
+			)
+				.catch((err) => {
+					if ((err as Error).name !== "AbortError") {
+						setError((err as Error).message);
+					}
+					setResult((prev) =>
+						prev ? { ...prev, isStreaming: false } : null,
+					);
+				})
+				.finally(() => {
+					setIsStreaming(false);
+					abortRef.current = null;
+				});
+		},
+		[],
+	);
+
+	const handleStop = () => {
+		abortRef.current?.abort();
+	};
 
 	return (
 		<div className="space-y-8">
@@ -43,7 +142,12 @@ export default function SummariesPage() {
 				</p>
 			</div>
 
-			<SummaryForm onResult={setResult} />
+			<SummaryForm
+				onGenerate={handleStream}
+				isStreaming={isStreaming}
+				onStop={handleStop}
+				error={error}
+			/>
 			{result && <SummaryResult result={result} />}
 		</div>
 	);
@@ -51,7 +155,23 @@ export default function SummariesPage() {
 
 // ── Summary Form ───────────────────────────────────────
 
-function SummaryForm({ onResult }: { onResult: (r: SummaryResponse) => void }) {
+function SummaryForm({
+	onGenerate,
+	isStreaming,
+	onStop,
+	error,
+}: {
+	onGenerate: (params: {
+		topic?: string;
+		document_id?: string;
+		page_start?: number;
+		page_end?: number;
+		detail_level: DetailLevel;
+	}) => void;
+	isStreaming: boolean;
+	onStop: () => void;
+	error: string | null;
+}) {
 	const [topic, setTopic] = useState("");
 	const [docId, setDocId] = useState("");
 	const [detailLevel, setDetailLevel] = useState<DetailLevel>("standard");
@@ -64,22 +184,16 @@ function SummaryForm({ onResult }: { onResult: (r: SummaryResponse) => void }) {
 	});
 	const docs = docData?.documents ?? [];
 
-	const genMut = useMutation({
-		mutationFn: () =>
-			generateSummary({
-				topic: topic || undefined,
-				document_id: docId || undefined,
-				page_start: pageStart ? Number(pageStart) : undefined,
-				page_end: pageEnd ? Number(pageEnd) : undefined,
-				detail_level: detailLevel,
-			}),
-		onSuccess: (data) => onResult(data),
-	});
-
 	const handleSubmit = (e: React.SubmitEvent) => {
 		e.preventDefault();
 		if (!topic && !docId) return;
-		genMut.mutate();
+		onGenerate({
+			topic: topic || undefined,
+			document_id: docId || undefined,
+			page_start: pageStart ? Number(pageStart) : undefined,
+			page_end: pageEnd ? Number(pageEnd) : undefined,
+			detail_level: detailLevel,
+		});
 	};
 
 	return (
@@ -122,7 +236,7 @@ function SummaryForm({ onResult }: { onResult: (r: SummaryResponse) => void }) {
 						</Select>
 					</div>
 
-					<div className="grid grid-cols-3 gap-4">
+					<div className="grid md:grid-cols-3 gap-4">
 						<div className="space-y-2">
 							<Label>Detail level</Label>
 							<Select
@@ -163,19 +277,27 @@ function SummaryForm({ onResult }: { onResult: (r: SummaryResponse) => void }) {
 						</div>
 					</div>
 
-					{genMut.isError && (
+					{error && (
 						<p className="text-sm text-destructive">
-							Failed to generate summary: {genMut.error.message}
+							Failed to generate summary: {error}
 						</p>
 					)}
 
-					<Button
-						type="submit"
-						disabled={(!topic && !docId) || genMut.isPending}
-					>
-						{genMut.isPending && <Loader2 className="animate-spin" />}
-						Generate summary
-					</Button>
+					<div className="flex gap-2">
+						<Button
+							type="submit"
+							disabled={(!topic && !docId) || isStreaming}
+						>
+							{isStreaming && <Loader2 className="animate-spin" />}
+							Generate summary
+						</Button>
+						{isStreaming && (
+							<Button type="button" variant="destructive" onClick={onStop}>
+								<Square />
+								Stop
+							</Button>
+						)}
+					</div>
 				</form>
 			</CardContent>
 		</Card>
@@ -184,18 +306,40 @@ function SummaryForm({ onResult }: { onResult: (r: SummaryResponse) => void }) {
 
 // ── Summary Result ─────────────────────────────────────
 
-function SummaryResult({ result }: { result: SummaryResponse }) {
+function SummaryResult({ result }: { result: StreamingResult }) {
 	return (
 		<Card>
 			<CardHeader>
 				<div className="flex items-center justify-between">
-					<CardTitle>Summary: {result.topic}</CardTitle>
-					{result.model && <Badge variant="outline">{result.model}</Badge>}
+					<CardTitle>
+						{result.topic
+							? `Summary: ${result.topic}`
+							: result.isStreaming
+								? "Generating..."
+								: "Summary"}
+					</CardTitle>
+					<div className="flex items-center gap-2">
+						{result.isStreaming && (
+							<Loader2 className="size-4 animate-spin text-muted-foreground" />
+						)}
+						{result.model && (
+							<Badge variant="outline">{result.model}</Badge>
+						)}
+					</div>
 				</div>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				<div className="prose prose-sm max-w-none dark:prose-invert">
-					<Markdown>{result.summary}</Markdown>
+					{result.summary ? (
+						<Markdown>{result.summary}</Markdown>
+					) : result.isStreaming ? (
+						<div className="flex items-center gap-2">
+							<Loader2 className="size-4 animate-spin text-muted-foreground" />
+							<span className="text-sm text-muted-foreground">
+								Generating summary...
+							</span>
+						</div>
+					) : null}
 				</div>
 
 				{result.sources.length > 0 && (

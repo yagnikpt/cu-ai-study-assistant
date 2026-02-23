@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ChevronDown,
+	CircleAlert,
+	CircleCheck,
 	Eye,
 	FileStack,
 	Loader2,
@@ -45,6 +47,12 @@ import {
 import { Separator } from "~/components/ui/separator";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "~/components/ui/tooltip";
+import {
 	addTagsToDocument,
 	createTag,
 	deleteDocument,
@@ -57,6 +65,7 @@ import type {
 	Document,
 	DocumentChunk,
 	DocumentListParams,
+	DocumentListResponse,
 	DocumentStatus,
 } from "~/lib/types";
 import { cn } from "~/lib/utils";
@@ -200,7 +209,7 @@ function UploadSection() {
 					/>
 
 					{/* Metadata fields */}
-					<div className="grid grid-cols-2 gap-4">
+					<div className="grid md:grid-cols-2 gap-4">
 						<div className="space-y-2">
 							<Label htmlFor="course-name">Course name (optional)</Label>
 							<Input
@@ -235,7 +244,7 @@ function UploadSection() {
 							<span className="font-medium">
 								{uploadMut.data.original_filename}
 							</span>{" "}
-							successfully (status: {uploadMut.data.status}).
+							successfully. Processing will begin shortly.
 						</p>
 					)}
 
@@ -258,6 +267,11 @@ function DocumentList() {
 	const { data, isLoading, isError, error } = useQuery({
 		queryKey: ["documents", filters],
 		queryFn: () => listDocuments(filters),
+		refetchInterval: (query) => {
+			const docs = query.state.data?.documents;
+			if (docs?.some((d) => d.status === "processing")) return 3000;
+			return false;
+		},
 	});
 
 	return (
@@ -361,6 +375,35 @@ function FilterBar({
 	);
 }
 
+// ── Status Icon ────────────────────────────────────────
+
+function StatusIcon({ status }: { status: DocumentStatus }) {
+	return (
+		<TooltipProvider>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="flex shrink-0 items-center">
+						{status === "processing" && (
+							<Loader2 className="size-4 animate-spin text-muted-foreground" />
+						)}
+						{status === "ready" && (
+							<CircleCheck className="size-4 text-green-500" />
+						)}
+						{status === "error" && (
+							<CircleAlert className="size-4 text-destructive" />
+						)}
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="right">
+					{status === "processing" && "Processing"}
+					{status === "ready" && "Ready"}
+					{status === "error" && "Error"}
+				</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
+	);
+}
+
 // ── Document Row ───────────────────────────────────────
 
 function DocumentRow({ doc }: { doc: Document }) {
@@ -370,14 +413,12 @@ function DocumentRow({ doc }: { doc: Document }) {
 
 	const deleteMut = useMutation({
 		mutationFn: () => deleteDocument(doc.id),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["documents"] }),
+		onSuccess: () =>
+			setTimeout(
+				() => queryClient.invalidateQueries({ queryKey: ["documents"] }),
+				500,
+			),
 	});
-
-	const statusVariant = {
-		ready: "secondary" as const,
-		processing: "outline" as const,
-		error: "destructive" as const,
-	};
 
 	const sizeKB = (doc.file_size_bytes / 1024).toFixed(1);
 
@@ -387,7 +428,7 @@ function DocumentRow({ doc }: { doc: Document }) {
 				{/* Header row */}
 				<CollapsibleTrigger className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/50">
 					<div className="flex items-center gap-3 overflow-hidden">
-						<Badge variant={statusVariant[doc.status]}>{doc.status}</Badge>
+						<StatusIcon status={doc.status} />
 						<span className="truncate text-sm font-medium">
 							{doc.original_filename}
 						</span>
@@ -428,19 +469,19 @@ function DocumentRow({ doc }: { doc: Document }) {
 						{/* Metrics row */}
 						<div className="grid grid-cols-3 gap-3">
 							<div className="rounded-lg border bg-muted/50 p-3 text-center">
-								<p className="text-2xl font-bold tabular-nums">
+								<p className="md:text-2xl font-bold tabular-nums">
 									{doc.page_count}
 								</p>
 								<p className="text-xs text-muted-foreground">Pages</p>
 							</div>
 							<div className="rounded-lg border bg-muted/50 p-3 text-center">
-								<p className="text-2xl font-bold tabular-nums">
+								<p className="md:text-2xl font-bold tabular-nums">
 									{doc.chunk_count}
 								</p>
 								<p className="text-xs text-muted-foreground">Chunks</p>
 							</div>
 							<div className="rounded-lg border bg-muted/50 p-3 text-center">
-								<p className="text-2xl font-bold tabular-nums">{sizeKB}</p>
+								<p className="md:text-2xl font-bold tabular-nums">{sizeKB}</p>
 								<p className="text-xs text-muted-foreground">KB</p>
 							</div>
 						</div>
@@ -475,7 +516,7 @@ function DocumentRow({ doc }: { doc: Document }) {
 						)}
 
 						{/* Actions */}
-						<div className="mt-4 flex items-center gap-2">
+						<div className="mt-4 flex flex-wrap items-center gap-2">
 							<Button
 								variant="outline"
 								size="sm"

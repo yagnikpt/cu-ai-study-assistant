@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Models
     embedding_model: str = "text-embedding-004"
-    generation_model: str = "gemini-2.0-flash"
+    generation_model: str = "gemini-2.5-flash-lite"
 
     # Embedding dimensions (gemini-embedding-001 with output_dimensionality=768)
     embedding_dimensions: int = 768

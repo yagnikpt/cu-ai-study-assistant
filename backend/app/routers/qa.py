@@ -1,6 +1,7 @@
 """Q&A router - RAG-based question answering with source attribution."""
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.dependencies import DBSession
 from app.schemas.qa import (
@@ -12,7 +13,7 @@ from app.schemas.qa import (
     SourceReference,
 )
 from app.services.embeddings import embed_query
-from app.services.qa_service import ask_question
+from app.services.qa_service import ask_question, ask_question_stream
 from app.services.vector_search import search_similar_chunks
 
 router = APIRouter(prefix="/api/v1/qa", tags=["qa"])
@@ -47,6 +48,32 @@ async def ask(db: DBSession, body: AskRequest):
         answer=result["answer"],
         sources=[SourceReference(**s) for s in result["sources"]],
         model=result["model"],
+    )
+
+
+@router.post("/ask/stream")
+async def ask_stream(db: DBSession, body: AskRequest):
+    """Stream a RAG-grounded answer as Server-Sent Events.
+
+    SSE events emitted:
+      - `sources`: JSON array of source references (sent first)
+      - `token`: JSON string with a text fragment (many times)
+      - `done`: JSON object with `model` field (sent last)
+    """
+    try:
+        event_stream = ask_question_stream(
+            db=db,
+            question=body.question,
+            document_ids=body.document_ids,
+            top_k=body.top_k,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return StreamingResponse(
+        event_stream,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

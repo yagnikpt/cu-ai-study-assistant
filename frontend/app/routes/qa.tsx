@@ -1,13 +1,15 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpen,
 	ChevronDown,
 	Loader2,
 	Send,
 	Settings2,
+	Square,
 	Trash2,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
+import Markdown from "react-markdown";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -17,9 +19,10 @@ import {
 } from "~/components/ui/collapsible";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import { Separator } from "~/components/ui/separator";
-import { askQuestion, listDocuments } from "~/lib/api";
-import type { AskResponse, SourceReference } from "~/lib/types";
+import { askQuestionStream, listDocuments } from "~/lib/api";
+import type { QAStreamEvent, SourceReference } from "~/lib/types";
 import { cn } from "~/lib/utils";
 
 // ── Types ──────────────────────────────────────────────
@@ -30,6 +33,7 @@ interface Message {
 	content: string;
 	sources?: SourceReference[];
 	model?: string;
+	isStreaming?: boolean;
 }
 
 let msgId = 0;
@@ -44,6 +48,8 @@ export default function QAPage() {
 	const [input, setInput] = useState("");
 	const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
 	const [topK, setTopK] = useState(5);
+	const [isStreaming, setIsStreaming] = useState(false);
+	const abortRef = useRef<AbortController | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 
 	// Load ready documents for scope selector
@@ -52,35 +58,6 @@ export default function QAPage() {
 		queryFn: () => listDocuments({ status: "ready", limit: 100 }),
 	});
 	const docs = docData?.documents ?? [];
-
-	const askMut = useMutation({
-		mutationFn: (question: string) =>
-			askQuestion({
-				question,
-				document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
-				top_k: topK,
-			}),
-		onSuccess: (data: AskResponse) => {
-			setMessages((prev) => [
-				...prev,
-				{
-					id: nextId(),
-					role: "assistant",
-					content: data.answer,
-					sources: data.sources,
-					model: data.model,
-				},
-			]);
-			scrollToBottom();
-		},
-		onError: (err: Error) => {
-			setMessages((prev) => [
-				...prev,
-				{ id: nextId(), role: "assistant", content: `Error: ${err.message}` },
-			]);
-			scrollToBottom();
-		},
-	});
 
 	const scrollToBottom = useCallback(() => {
 		requestAnimationFrame(() => {
@@ -91,10 +68,101 @@ export default function QAPage() {
 		});
 	}, []);
 
+	const handleStream = useCallback(
+		async (question: string) => {
+			const assistantId = nextId();
+			setIsStreaming(true);
+
+			// Add placeholder assistant message
+			setMessages((prev) => [
+				...prev,
+				{ id: assistantId, role: "assistant", content: "", isStreaming: true },
+			]);
+			scrollToBottom();
+
+			const abort = new AbortController();
+			abortRef.current = abort;
+
+			try {
+				await askQuestionStream(
+					{
+						question,
+						document_ids:
+							selectedDocIds.length > 0 ? selectedDocIds : undefined,
+						top_k: topK,
+					},
+					(event: QAStreamEvent) => {
+						switch (event.type) {
+							case "sources":
+								setMessages((prev) =>
+									prev.map((m) =>
+										m.id === assistantId
+											? { ...m, sources: event.data }
+											: m,
+									),
+								);
+								break;
+							case "token":
+								setMessages((prev) =>
+									prev.map((m) =>
+										m.id === assistantId
+											? { ...m, content: m.content + event.data }
+											: m,
+									),
+								);
+								scrollToBottom();
+								break;
+							case "done":
+								setMessages((prev) =>
+									prev.map((m) =>
+										m.id === assistantId
+											? {
+													...m,
+													model: event.data.model,
+													isStreaming: false,
+												}
+											: m,
+									),
+								);
+								break;
+						}
+					},
+					abort.signal,
+				);
+			} catch (err) {
+				if ((err as Error).name === "AbortError") {
+					// Mark as no longer streaming but keep partial content
+					setMessages((prev) =>
+						prev.map((m) =>
+							m.id === assistantId ? { ...m, isStreaming: false } : m,
+						),
+					);
+				} else {
+					setMessages((prev) =>
+						prev.map((m) =>
+							m.id === assistantId
+								? {
+										...m,
+										content: `Error: ${(err as Error).message}`,
+										isStreaming: false,
+									}
+								: m,
+						),
+					);
+				}
+			} finally {
+				setIsStreaming(false);
+				abortRef.current = null;
+				scrollToBottom();
+			}
+		},
+		[selectedDocIds, topK, scrollToBottom],
+	);
+
 	const handleSubmit = (e: React.SubmitEvent) => {
 		e.preventDefault();
 		const question = input.trim();
-		if (!question || askMut.isPending) return;
+		if (!question || isStreaming) return;
 
 		setMessages((prev) => [
 			...prev,
@@ -102,16 +170,21 @@ export default function QAPage() {
 		]);
 		setInput("");
 		scrollToBottom();
-		askMut.mutate(question);
+		handleStream(question);
+	};
+
+	const handleStop = () => {
+		abortRef.current?.abort();
 	};
 
 	const handleClear = () => {
+		abortRef.current?.abort();
 		setMessages([]);
-		askMut.reset();
+		setIsStreaming(false);
 	};
 
 	return (
-		<div className="flex h-[calc(100vh-8rem)] flex-col">
+		<div className="flex h-[calc(100dvh-6rem)] flex-col">
 			{/* Header */}
 			<div className="mb-4 flex items-start justify-between">
 				<div>
@@ -138,30 +211,25 @@ export default function QAPage() {
 			/>
 
 			{/* Chat area */}
-			<div
+			<ScrollArea
 				ref={scrollRef}
-				className="flex-1 space-y-4 overflow-y-auto rounded-xl border bg-muted/30 p-4"
+				className="flex-1 overflow-y-hidden rounded-xl border bg-muted/30 relative"
 			>
-				{messages.length === 0 && !askMut.isPending && (
-					<div className="flex h-full flex-col items-center justify-center gap-2">
-						<BookOpen className="size-8 text-muted-foreground" />
-						<p className="text-sm text-muted-foreground">
-							Ask a question to get started.
-						</p>
-					</div>
-				)}
+				<div className="p-4 space-y-4">
+					{messages.length === 0 && !isStreaming && (
+						<div className="flex flex-col justify-center items-center gap-2 absolute top-1/2 left-1/2 -translate-1/2">
+							<BookOpen className="size-8 text-muted-foreground" />
+							<p className="text-sm text-muted-foreground text-center">
+								Ask a question to get started.
+							</p>
+						</div>
+					)}
 
-				{messages.map((msg) => (
-					<ChatBubble key={msg.id} message={msg} />
-				))}
-
-				{askMut.isPending && (
-					<div className="flex items-center gap-2 px-4 py-3">
-						<Loader2 className="size-4 animate-spin text-muted-foreground" />
-						<span className="text-sm text-muted-foreground">Thinking...</span>
-					</div>
-				)}
-			</div>
+					{messages.map((msg) => (
+						<ChatBubble key={msg.id} message={msg} />
+					))}
+				</div>
+			</ScrollArea>
 
 			{/* Input */}
 			<form onSubmit={handleSubmit} className="mt-3 flex gap-2">
@@ -169,13 +237,29 @@ export default function QAPage() {
 					value={input}
 					onChange={(e) => setInput(e.target.value)}
 					placeholder="Ask a question about your documents..."
-					disabled={askMut.isPending}
-					className="flex-1"
+					disabled={isStreaming}
+					className="flex-1 h-11 text-base!"
 				/>
-				<Button type="submit" disabled={!input.trim() || askMut.isPending}>
-					{askMut.isPending ? <Loader2 className="animate-spin" /> : <Send />}
-					Send
-				</Button>
+				{isStreaming ? (
+					<Button
+						className="h-full"
+						type="button"
+						variant="destructive"
+						onClick={handleStop}
+					>
+						<Square />
+						Stop
+					</Button>
+				) : (
+					<Button
+						className="h-full"
+						type="submit"
+						disabled={!input.trim()}
+					>
+						<Send />
+						Send
+					</Button>
+				)}
 			</form>
 		</div>
 	);
@@ -294,7 +378,22 @@ function ChatBubble({ message }: { message: Message }) {
 					isUser ? "bg-primary text-primary-foreground" : "border bg-card",
 				)}
 			>
-				<p className="whitespace-pre-wrap text-sm">{message.content}</p>
+				{isUser ? (
+					<p className="whitespace-pre-wrap text-sm">{message.content}</p>
+				) : (
+					<article className="prose-sm">
+						{message.content ? (
+							<Markdown>{message.content}</Markdown>
+						) : message.isStreaming ? (
+							<div className="flex items-center gap-2">
+								<Loader2 className="size-4 animate-spin text-muted-foreground" />
+								<span className="text-sm text-muted-foreground">
+									Thinking...
+								</span>
+							</div>
+						) : null}
+					</article>
+				)}
 
 				{!isUser && message.sources && message.sources.length > 0 && (
 					<>
