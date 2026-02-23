@@ -76,6 +76,7 @@ async def generate_quiz(
     topic: str | None = None,
     question_count: int = 5,
     question_types: list[str] | None = None,
+    space_id: uuid.UUID | None = None,
 ) -> Quiz:
     """Generate a quiz from course materials.
 
@@ -98,7 +99,17 @@ async def generate_quiz(
 
     if topic:
         query_embedding = await embed_query(topic)
-        doc_ids = [document_id] if document_id else None
+        # Scope to space docs if space_id provided
+        doc_ids = None
+        if document_id:
+            doc_ids = [document_id]
+        elif space_id:
+            result = await db.execute(
+                select(Document.id).where(
+                    Document.space_id == space_id, Document.status == "ready"
+                )
+            )
+            doc_ids = list(result.scalars().all())
         chunks = await search_similar_chunks(
             db=db,
             query_embedding=query_embedding,
@@ -201,6 +212,7 @@ Generate the questions as JSON."""
     quiz = Quiz(
         title=f"Quiz: {effective_topic}",
         document_id=document_id,
+        space_id=space_id,
         topic=effective_topic,
         question_count=len(quiz_data.get("questions", [])),
     )

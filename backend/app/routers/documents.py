@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies import DBSession
-from app.models import Document, DocumentChunk, DocumentStatus, Tag, document_tags
+from app.models import Document, DocumentChunk, DocumentStatus, Space, Tag, document_tags
 from app.schemas.document import (
     DocumentChunkResponse,
     DocumentListResponse,
@@ -26,7 +26,7 @@ from app.schemas.document import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
+router = APIRouter(prefix="/api/v1/spaces/{space_id}/documents", tags=["documents"])
 
 
 async def _run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None:
@@ -104,6 +104,7 @@ async def _run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> Non
 async def upload_document(
     db: DBSession,
     background_tasks: BackgroundTasks,
+    space_id: uuid.UUID,
     file: UploadFile,
     course_name: str | None = Query(None),
     subject: str | None = Query(None),
@@ -147,6 +148,11 @@ async def upload_document(
     # Get actual file size
     file_size = file_path.stat().st_size
 
+    # Validate space exists
+    space = await db.get(Space, space_id)
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+
     # Create document record
     doc = Document(
         filename=safe_filename,
@@ -155,6 +161,7 @@ async def upload_document(
         file_size_bytes=file_size,
         course_name=course_name,
         subject=subject,
+        space_id=space_id,
         status=DocumentStatus.PROCESSING,
     )
     db.add(doc)
@@ -184,6 +191,7 @@ async def upload_document(
 @router.get("/", response_model=DocumentListResponse)
 async def list_documents(
     db: DBSession,
+    space_id: uuid.UUID,
     course_name: str | None = Query(None),
     subject: str | None = Query(None),
     status: str | None = Query(None),
@@ -191,8 +199,12 @@ async def list_documents(
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
-    """List all documents with optional filters."""
-    query = select(Document).options(selectinload(Document.tags))
+    """List documents in this space with optional filters."""
+    query = (
+        select(Document)
+        .options(selectinload(Document.tags))
+        .where(Document.space_id == space_id)
+    )
 
     if course_name:
         query = query.where(Document.course_name.ilike(f"{course_name}%"))

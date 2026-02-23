@@ -1,18 +1,23 @@
 # AI Study Assistant
 
 A RAG-based study tool that turns uploaded course material into an interactive
-learning experience. Upload PDFs, ask questions grounded in your sources, generate
-structured summaries, and quiz yourself -- powered by Google Gemini and pgvector.
+learning experience. Organize your materials into **Spaces**, upload PDFs, ask
+questions grounded in your sources, generate structured summaries, and quiz
+yourself — powered by Google Gemini, pgvector, and GitHub OAuth.
 
 ## Features
 
-- **Document ingestion** -- upload PDFs, automatically chunked with paragraph/heading
+- **Spaces** — organize documents, Q&A, summaries, and quizzes into isolated
+  study sessions; each user's data is fully private
+- **GitHub OAuth** — sign in with your GitHub account; session managed via
+  secure httpOnly JWT cookies
+- **Document ingestion** — upload PDFs, automatically chunked with paragraph/heading
   awareness, embedded via Gemini, and indexed with HNSW for fast vector search
-- **RAG Q&A** -- ask questions and get cited answers grounded in your documents,
+- **RAG Q&A** — ask questions and get cited answers grounded in your documents,
   streamed token-by-token via SSE for instant feedback
-- **Summaries** -- generate brief/standard/detailed summaries by topic or page range,
+- **Summaries** — generate brief/standard/detailed summaries by topic or page range,
   with real-time SSE streaming
-- **Quizzes** -- auto-generate MCQ and short-answer quizzes, take them, get graded
+- **Quizzes** — auto-generate MCQ and short-answer quizzes, take them, get graded
   with per-question feedback and topic strength analysis
 
 ## Architecture
@@ -24,10 +29,14 @@ Browser (localhost:5173)
 React SPA  ──(REST+SSE)──>  FastAPI Backend  ──>  PostgreSQL 17 + pgvector
 (React Router 7,         (async, py3.13)      (HNSW vector index)
  shadcn/ui,                   |
- TanStack Query)              v
+ TanStack Query)              +──> GitHub OAuth (code exchange)
+                              |
+                              v
                          Google Gemini API
                          (embeddings + generation)
 ```
+
+**Auth flow:** Browser → `/auth/github/login` → GitHub authorize → callback → upsert User → JWT cookie → redirect to `/spaces`
 
 **Backend layers:** Routers (HTTP) -> Services (business logic) -> Models (ORM) -> Schemas (Pydantic)
 
@@ -35,9 +44,10 @@ React SPA  ──(REST+SSE)──>  FastAPI Backend  ──>  PostgreSQL 17 + pg
 
 | Layer | Stack |
 |-------|-------|
-| Backend | FastAPI, Python 3.13, SQLAlchemy 2.0 (asyncpg), Alembic, pgvector, PyMuPDF, Google Gemini, uv |
+| Backend | FastAPI, Python 3.13, SQLAlchemy 2.0 (asyncpg), Alembic, pgvector, PyMuPDF, Google Gemini, PyJWT, httpx, uv |
 | Frontend | React 19, React Router 7 (SPA mode), TypeScript, Vite 7, Tailwind CSS 4, shadcn/ui, TanStack Query 5, Bun |
 | Database | PostgreSQL 17, pgvector (HNSW cosine similarity), Docker Compose |
+| Auth | GitHub OAuth 2.0, JWT (httpOnly cookies, HS256) |
 
 ## Project Structure
 
@@ -50,10 +60,12 @@ cu_study_assistant/
 |   |-- .env.example                # Environment template
 |   +-- app/
 |       |-- main.py                 # FastAPI app + lifespan
-|       |-- config.py               # Pydantic Settings
-|       |-- models/document.py      # ORM models
-|       |-- schemas/                # Pydantic request/response schemas
-|       |-- routers/                # documents, tags, qa, summaries, quizzes
+|       |-- config.py               # Pydantic Settings (DB, AI, OAuth, JWT)
+|       |-- auth.py                 # JWT create/decode, get_current_user
+|       |-- dependencies.py         # DBSession, CurrentUser
+|       |-- models/document.py      # ORM models (User, Space, Document, Quiz, ...)
+|       |-- schemas/                # Pydantic schemas (auth, space, document, qa, ...)
+|       |-- routers/                # auth, spaces, documents, tags, qa, summaries, quizzes
 |       +-- services/               # pdf_parser, chunker, embeddings,
 |                                   # vector_search, qa, summary, quiz
 |
@@ -62,12 +74,13 @@ cu_study_assistant/
     |-- components.json             # shadcn/ui config
     +-- app/
         |-- root.tsx                # HTML shell + QueryClientProvider
-        |-- routes.ts               # Route definitions
-        |-- components/layout.tsx   # Sidebar (offcanvas mobile, fixed desktop)
-        |-- components/ui/          # 20 shadcn/ui components
+        |-- routes.ts               # Route definitions (login, spaces, space/:id/...)
+        |-- components/AuthProvider.tsx  # Auth context, redirect to /login
+        |-- components/layout.tsx   # Sidebar (space name, nav, user avatar + logout)
+        |-- components/ui/          # shadcn/ui components
         |-- lib/api.ts              # Typed fetch wrappers + SSE stream consumers
-        |-- lib/types.ts            # TS interfaces mirroring backend schemas + SSE events
-        +-- routes/                 # documents, qa, summaries, quizzes,
+        |-- lib/types.ts            # TS interfaces (User, Space, Document, Quiz, ...)
+        +-- routes/                 # login, spaces, documents, qa, summaries, quizzes,
                                     # quizzes.$quizId.take, quizzes.$quizId.results
 ```
 
@@ -79,6 +92,7 @@ cu_study_assistant/
 - [Bun](https://bun.sh/)
 - Docker and Docker Compose
 - [Google Gemini API key](https://aistudio.google.com/apikey)
+- [GitHub OAuth App](https://github.com/settings/developers) (callback URL: `http://localhost:8000/auth/github/callback`)
 
 ### 1. Database
 
@@ -91,7 +105,8 @@ docker compose ps  # wait for "healthy"
 
 ```bash
 cd backend
-cp .env.example .env        # edit .env and set GEMINI_API_KEY
+cp .env.example .env
+# Edit .env — set GEMINI_API_KEY, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, JWT_SECRET
 uv sync
 uv run alembic upgrade head
 uv run python main.py       # http://localhost:8000
@@ -122,6 +137,18 @@ bun run build   # outputs static SPA to build/client/
 
 ## Data Flow
 
+### Authentication
+
+```
+Browser -> GET /auth/github/login -> Redirect to GitHub
+  -> User authorizes -> GitHub redirects to /auth/github/callback?code=XXX
+  -> Backend exchanges code for access token
+  -> Fetches GitHub profile (id, login, avatar_url, email)
+  -> Upserts User record in DB
+  -> Creates JWT, sets httpOnly "session" cookie
+  -> Redirects to frontend /spaces
+```
+
 ### Document Ingestion
 
 ```
@@ -137,7 +164,7 @@ Upload PDF -> Save to disk (status: "processing")
 
 ```
 Question -> Embed query (768-dim)
-  -> pgvector cosine similarity search (top-k chunks, optional doc filter)
+  -> pgvector cosine similarity search (top-k chunks, scoped to space documents)
   -> Build prompt (system: cite sources, use markdown, be educational)
   -> Gemini async streaming generation (temp=0.3)
   -> SSE: sources event -> token events (progressive) -> done event
@@ -146,9 +173,9 @@ Question -> Embed query (768-dim)
 
 ### Summaries
 
-Two modes: **topic-based** (embed topic, search all docs) or **page-range**
+Two modes: **topic-based** (embed topic, search space docs) or **page-range**
 (direct DB query). Detail levels: brief, standard, detailed. Both Q&A and
-summaries stream via SSE -- sources/metadata are sent first so the UI can
+summaries stream via SSE — sources/metadata are sent first so the UI can
 display them while tokens are still arriving.
 
 ### Quizzes
@@ -159,31 +186,71 @@ accuracy, flag weak topics (<70%).
 
 ## API Reference
 
-All under `/api/v1/`. Full Swagger UI at `/docs`.
+All endpoints under `/api/v1/`. Full Swagger UI at `/docs`.
+
+### Auth
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/documents/` | Upload PDF (multipart). Background ingestion. |
-| `GET` | `/documents/` | List. Filters: course, subject, status, tag. |
-| `GET` | `/documents/{id}` | Detail with chunk count and tags. |
-| `PATCH` | `/documents/{id}` | Update course/subject. |
-| `DELETE` | `/documents/{id}` | Delete document + chunks + file. |
-| `POST` | `/documents/{id}/tags` | Add tags. |
-| `DELETE` | `/documents/{id}/tags/{tag_id}` | Remove tag. |
-| `GET` | `/documents/{id}/chunks` | View chunks (paginated). |
+| `GET` | `/auth/github/login` | Redirect to GitHub OAuth |
+| `GET` | `/auth/github/callback` | OAuth callback (exchanges code, sets cookie) |
+| `GET` | `/api/v1/auth/me` | Get current authenticated user |
+| `POST` | `/api/v1/auth/logout` | Clear session cookie |
+
+### Spaces
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/spaces/` | Create space (scoped to current user) |
+| `GET` | `/spaces/` | List user's spaces |
+| `GET` | `/spaces/{id}` | Get space detail |
+| `PATCH` | `/spaces/{id}` | Update space name/description |
+| `DELETE` | `/spaces/{id}` | Delete space + all contents |
+
+### Documents (scoped to space)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/spaces/{space_id}/documents/` | Upload PDF. Background ingestion. |
+| `GET` | `/spaces/{space_id}/documents/` | List. Filters: course, subject, status, tag. |
+| `GET` | `/spaces/{space_id}/documents/{id}` | Detail with chunk count and tags. |
+| `PATCH` | `/spaces/{space_id}/documents/{id}` | Update course/subject. |
+| `DELETE` | `/spaces/{space_id}/documents/{id}` | Delete document + chunks + file. |
+| `POST` | `/spaces/{space_id}/documents/{id}/tags` | Add tags. |
+| `GET` | `/spaces/{space_id}/documents/{id}/chunks` | View chunks (paginated). |
+
+### Tags (global)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | `POST` | `/tags/` | Create tag. |
 | `GET` | `/tags/` | List tags. |
 | `DELETE` | `/tags/{id}` | Delete tag. |
-| `POST` | `/qa/ask` | Ask question. Returns cited answer. |
-| `POST` | `/qa/ask/stream` | Ask question (SSE stream: sources, tokens, done). |
-| `POST` | `/qa/search` | Semantic search only (no LLM). |
-| `POST` | `/summaries/generate` | Generate summary (topic/page-range). |
-| `POST` | `/summaries/generate/stream` | Generate summary (SSE stream: meta, tokens, done). |
-| `POST` | `/quizzes/generate` | Generate quiz. |
-| `GET` | `/quizzes/` | List quizzes. |
-| `GET` | `/quizzes/{id}` | Get quiz (answers hidden). |
-| `POST` | `/quizzes/{id}/attempt` | Submit answers, get grading. |
-| `GET` | `/quizzes/{id}/results` | Aggregated results + topic analysis. |
+
+### Q&A (scoped to space)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/spaces/{space_id}/qa/ask` | Ask question. Returns cited answer. |
+| `POST` | `/spaces/{space_id}/qa/ask/stream` | Ask question (SSE stream). |
+| `POST` | `/spaces/{space_id}/qa/search` | Semantic search only (no LLM). |
+
+### Summaries (scoped to space)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/spaces/{space_id}/summaries/generate` | Generate summary. |
+| `POST` | `/spaces/{space_id}/summaries/generate/stream` | Generate summary (SSE stream). |
+
+### Quizzes (scoped to space)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/spaces/{space_id}/quizzes/generate` | Generate quiz. |
+| `GET` | `/spaces/{space_id}/quizzes/` | List quizzes. |
+| `GET` | `/spaces/{space_id}/quizzes/{id}` | Get quiz (answers hidden). |
+| `POST` | `/spaces/{space_id}/quizzes/{id}/attempt` | Submit answers, get grading. |
+| `GET` | `/spaces/{space_id}/quizzes/{id}/results` | Aggregated results + topic analysis. |
 
 ### SSE Streaming Protocol
 
@@ -213,15 +280,15 @@ aborting mid-stream via a Stop button.
 ## Database Schema
 
 ```
-documents  ----<  document_chunks (embedding vec(768), HNSW index)
-    |
-    +---->  document_tags  >----  tags
-    |
-    +----<  quizzes  ----<  quiz_questions  ----<  quiz_attempts
+users  ----<  spaces  ----<  documents  ----<  document_chunks (embedding vec(768), HNSW index)
+                 |               |
+                 |               +---->  document_tags  >----  tags
+                 |
+                 +----<  quizzes  ----<  quiz_questions  ----<  quiz_attempts
 ```
 
 Key: HNSW index on embeddings (`vector_cosine_ops`, m=16, ef_construction=64),
-B-tree indexes on FKs/status/dates, auto-update trigger on `documents.updated_at`.
+B-tree indexes on FKs/status/dates, auto-update triggers on `updated_at` columns.
 
 ## Configuration
 
@@ -231,7 +298,13 @@ B-tree indexes on FKs/status/dates, auto-update trigger on `documents.updated_at
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql+asyncpg://...localhost:5433/study_assistant` | DB connection |
 | `GEMINI_API_KEY` | *(required)* | Gemini API key |
-| `EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
+| `GITHUB_CLIENT_ID` | *(required)* | GitHub OAuth app client ID |
+| `GITHUB_CLIENT_SECRET` | *(required)* | GitHub OAuth app client secret |
+| `JWT_SECRET` | `change-me-in-production` | Secret for signing JWTs |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `JWT_EXPIRY_HOURS` | `72` | Session duration |
+| `FRONTEND_URL` | `http://localhost:5173` | Where to redirect after OAuth |
+| `EMBEDDING_MODEL` | `text-embedding-004` | Embedding model |
 | `GENERATION_MODEL` | `gemini-2.5-flash-lite` | Generation model |
 | `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 | `CHUNK_SIZE` | `700` | Tokens per chunk |

@@ -6,16 +6,28 @@ import {
 } from "@react-router/dev/routes";
 
 export default [
-	// Redirect "/" → "/documents"
+	// Redirect "/" → "/spaces"
 	index("routes/index.tsx"),
 
-	// All pages share the sidebar layout
+	// Login page — no auth required
+	route("login", "routes/login.tsx"),
+
+	// Spaces list — auth required (handled in AuthGate layout)
+	route("spaces", "routes/spaces.tsx"),
+
+	// All pages inside a space share the sidebar layout
 	layout("components/layout.tsx", [
-		route("documents", "routes/documents.tsx"),
-		route("qa", "routes/qa.tsx"),
-		route("summaries", "routes/summaries.tsx"),
-		route("quizzes", "routes/quizzes.tsx"),
-		route("quizzes/:quizId/take", "routes/quizzes.$quizId.take.tsx"),
-		route("quizzes/:quizId/results", "routes/quizzes.$quizId.results.tsx"),
+		route("spaces/:spaceId/documents", "routes/documents.tsx"),
+		route("spaces/:spaceId/qa", "routes/qa.tsx"),
+		route("spaces/:spaceId/summaries", "routes/summaries.tsx"),
+		route("spaces/:spaceId/quizzes", "routes/quizzes.tsx"),
+		route(
+			"spaces/:spaceId/quizzes/:quizId/take",
+			"routes/quizzes.$quizId.take.tsx",
+		),
+		route(
+			"spaces/:spaceId/quizzes/:quizId/results",
+			"routes/quizzes.$quizId.results.tsx",
+		),
 	]),
 ] satisfies RouteConfig;

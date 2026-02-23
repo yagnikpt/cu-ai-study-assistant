@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import Markdown from "react-markdown";
+import { useParams } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -44,6 +45,7 @@ function nextId() {
 // ── Main Page ──────────────────────────────────────────
 
 export default function QAPage() {
+	const { spaceId } = useParams<{ spaceId: string }>();
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [input, setInput] = useState("");
 	const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -52,10 +54,12 @@ export default function QAPage() {
 	const abortRef = useRef<AbortController | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 
+	if (!spaceId) return null;
+
 	// Load ready documents for scope selector
 	const { data: docData } = useQuery({
-		queryKey: ["documents", { status: "ready", limit: 100 }],
-		queryFn: () => listDocuments({ status: "ready", limit: 100 }),
+		queryKey: ["documents", spaceId, { status: "ready", limit: 100 }],
+		queryFn: () => listDocuments(spaceId, { status: "ready", limit: 100 }),
 	});
 	const docs = docData?.documents ?? [];
 
@@ -85,6 +89,7 @@ export default function QAPage() {
 
 			try {
 				await askQuestionStream(
+					spaceId,
 					{
 						question,
 						document_ids:
@@ -96,9 +101,7 @@ export default function QAPage() {
 							case "sources":
 								setMessages((prev) =>
 									prev.map((m) =>
-										m.id === assistantId
-											? { ...m, sources: event.data }
-											: m,
+										m.id === assistantId ? { ...m, sources: event.data } : m,
 									),
 								);
 								break;
@@ -251,11 +254,7 @@ export default function QAPage() {
 						Stop
 					</Button>
 				) : (
-					<Button
-						className="h-full"
-						type="submit"
-						disabled={!input.trim()}
-					>
+					<Button className="h-full" type="submit" disabled={!input.trim()}>
 						<Send />
 						Send
 					</Button>
@@ -381,7 +380,7 @@ function ChatBubble({ message }: { message: Message }) {
 				{isUser ? (
 					<p className="whitespace-pre-wrap text-sm">{message.content}</p>
 				) : (
-					<article className="prose-sm">
+					<div className="prose prose-sm max-w-none dark:prose-invert">
 						{message.content ? (
 							<Markdown>{message.content}</Markdown>
 						) : message.isStreaming ? (
@@ -392,7 +391,7 @@ function ChatBubble({ message }: { message: Message }) {
 								</span>
 							</div>
 						) : null}
-					</article>
+					</div>
 				)}
 
 				{!isUser && message.sources && message.sources.length > 0 && (

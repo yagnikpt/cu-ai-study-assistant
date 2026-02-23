@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import documents, qa, quizzes, summaries, tags
+from app.routers import auth, documents, qa, quizzes, spaces, summaries, tags
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +49,8 @@ app = FastAPI(
 )
 
 # Include routers
+app.include_router(auth.router)
+app.include_router(spaces.router)
 app.include_router(documents.router)
 app.include_router(tags.router)
 app.include_router(qa.router)

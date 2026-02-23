@@ -1,10 +1,16 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	ArrowLeft,
 	FileText,
 	GraduationCap,
+	LogOut,
 	MessageCircle,
 	ScrollText,
 } from "lucide-react";
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useNavigate, useParams } from "react-router";
+import { AuthProvider, useAuth } from "~/components/AuthProvider";
+import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
+import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import {
 	Sidebar,
@@ -21,22 +27,70 @@ import {
 	SidebarProvider,
 	SidebarTrigger,
 } from "~/components/ui/sidebar";
-
-const NAV_ITEMS = [
-	{ to: "/documents", label: "Documents", icon: FileText },
-	{ to: "/qa", label: "Q&A", icon: MessageCircle },
-	{ to: "/summaries", label: "Summaries", icon: ScrollText },
-	{ to: "/quizzes", label: "Quizzes", icon: GraduationCap },
-] as const;
+import { getSpace, logout } from "~/lib/api";
 
 export default function AppLayout() {
+	return (
+		<AuthProvider>
+			<LayoutContent />
+		</AuthProvider>
+	);
+}
+
+function LayoutContent() {
+	const { user } = useAuth();
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const { spaceId } = useParams<{ spaceId: string }>();
+
+	const { data: space } = useQuery({
+		queryKey: ["space", spaceId],
+		queryFn: () => getSpace(spaceId!),
+		enabled: !!spaceId,
+	});
+
+	const handleLogout = async () => {
+		await logout();
+		queryClient.clear();
+		navigate("/login");
+	};
+
+	const NAV_ITEMS = [
+		{
+			to: `/spaces/${spaceId}/documents`,
+			label: "Documents",
+			icon: FileText,
+		},
+		{ to: `/spaces/${spaceId}/qa`, label: "Q&A", icon: MessageCircle },
+		{
+			to: `/spaces/${spaceId}/summaries`,
+			label: "Summaries",
+			icon: ScrollText,
+		},
+		{
+			to: `/spaces/${spaceId}/quizzes`,
+			label: "Quizzes",
+			icon: GraduationCap,
+		},
+	] as const;
+
 	return (
 		<SidebarProvider>
 			<Sidebar collapsible="offcanvas">
 				<SidebarHeader>
 					<div className="flex items-center gap-2 px-2 py-1">
-						<GraduationCap className="size-5 text-primary" />
-						<span className="text-lg font-semibold">CU Study</span>
+						<NavLink
+							to="/spaces"
+							className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
+						>
+							<ArrowLeft className="size-4" />
+						</NavLink>
+						<Separator orientation="vertical" className="h-4" />
+						<div className="min-w-0 flex-1">
+							<p className="text-sm font-semibold truncate">
+								{space?.name ?? "Space"}
+							</p>
+						</div>
 					</div>
 				</SidebarHeader>
 
@@ -71,9 +125,30 @@ export default function AppLayout() {
 				</SidebarContent>
 
 				<SidebarFooter>
-					<p className="px-2 text-xs text-muted-foreground">
-						CU Study Assistant
-					</p>
+					{user && (
+						<div className="flex items-center gap-2 px-2 py-1">
+							<Avatar className="size-6">
+								<AvatarImage
+									src={user.avatar_url ?? undefined}
+									alt={user.username}
+								/>
+								<AvatarFallback className="text-xs">
+									{user.username[0]?.toUpperCase()}
+								</AvatarFallback>
+							</Avatar>
+							<span className="flex-1 truncate text-xs font-medium">
+								{user.username}
+							</span>
+							<Button
+								variant="ghost"
+								size="icon"
+								className="size-6"
+								onClick={handleLogout}
+							>
+								<LogOut className="size-3" />
+							</Button>
+						</div>
+					)}
 				</SidebarFooter>
 			</Sidebar>
 
@@ -82,7 +157,9 @@ export default function AppLayout() {
 				<header className="flex h-12 items-center gap-2 border-b px-4 md:hidden">
 					<SidebarTrigger />
 					<Separator orientation="vertical" className="h-4" />
-					<span className="text-sm font-medium">CU Study</span>
+					<span className="text-sm font-medium truncate">
+						{space?.name ?? "Space"}
+					</span>
 				</header>
 
 				<div className="mx-auto w-full max-w-5xl px-6 py-8">

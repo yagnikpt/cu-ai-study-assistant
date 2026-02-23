@@ -31,31 +31,38 @@ class ParsedDocument:
     metadata: dict
 
 
-def parse_pdf(file_path: str | Path) -> ParsedDocument:
-    """Parse a PDF file and extract text content page by page.
+def parse_pdf(source: str | Path | bytes) -> ParsedDocument:
+    """Parse a PDF and extract text content page by page.
 
     Uses PyMuPDF's block-level extraction which handles multi-column
     layouts better than simple text extraction. Blocks are sorted by
     position (top-to-bottom, left-to-right) to maintain reading order.
 
     Args:
-        file_path: Path to the PDF file.
+        source: Path to a PDF file, or raw PDF bytes.
 
     Returns:
         ParsedDocument with page-by-page content and metadata.
 
     Raises:
-        FileNotFoundError: If the PDF file doesn't exist.
-        ValueError: If the file is not a valid PDF or is encrypted.
+        FileNotFoundError: If a file path is given and doesn't exist.
+        ValueError: If the data is not a valid PDF or is encrypted.
     """
-    file_path = Path(file_path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"PDF file not found: {file_path}")
-
-    try:
-        doc = pymupdf.open(str(file_path))
-    except Exception as e:
-        raise ValueError(f"Failed to open PDF: {e}") from e
+    if isinstance(source, bytes):
+        try:
+            doc = pymupdf.open(stream=source, filetype="pdf")
+        except Exception as e:
+            raise ValueError(f"Failed to open PDF from bytes: {e}") from e
+        source_label = "in-memory PDF"
+    else:
+        file_path = Path(source)
+        if not file_path.exists():
+            raise FileNotFoundError(f"PDF file not found: {file_path}")
+        try:
+            doc = pymupdf.open(str(file_path))
+        except Exception as e:
+            raise ValueError(f"Failed to open PDF: {e}") from e
+        source_label = file_path.name
 
     if doc.is_encrypted:
         doc.close()
@@ -124,7 +131,7 @@ def parse_pdf(file_path: str | Path) -> ParsedDocument:
 
     doc.close()
 
-    logger.info(f"Parsed PDF: {file_path.name}, {len(pages)} pages")
+    logger.info(f"Parsed PDF: {source_label}, {len(pages)} pages")
 
     return ParsedDocument(
         pages=pages,

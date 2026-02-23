@@ -50,6 +50,7 @@ async def _retrieve_chunks(
     document_id: uuid.UUID | None = None,
     page_start: int | None = None,
     page_end: int | None = None,
+    space_id: uuid.UUID | None = None,
 ) -> tuple[list[dict], str]:
     """Shared chunk retrieval for both streaming and non-streaming.
 
@@ -92,7 +93,17 @@ async def _retrieve_chunks(
 
     elif topic:
         query_embedding = await embed_query(topic)
-        doc_ids = [document_id] if document_id else None
+        # If space_id is provided, restrict to space docs; else use doc_id if given
+        doc_ids = None
+        if document_id:
+            doc_ids = [document_id]
+        elif space_id:
+            result = await db.execute(
+                select(Document.id).where(
+                    Document.space_id == space_id, Document.status == "ready"
+                )
+            )
+            doc_ids = list(result.scalars().all())
         chunks = await search_similar_chunks(
             db=db,
             query_embedding=query_embedding,
@@ -164,6 +175,7 @@ async def generate_summary(
     page_start: int | None = None,
     page_end: int | None = None,
     detail_level: str = "standard",
+    space_id: uuid.UUID | None = None,
 ) -> dict:
     """Generate a structured summary from course materials.
 
@@ -175,7 +187,7 @@ async def generate_summary(
         Dict with 'summary' (markdown), 'topic', 'sources', and 'model'.
     """
     chunks, effective_topic = await _retrieve_chunks(
-        db, topic, document_id, page_start, page_end
+        db, topic, document_id, page_start, page_end, space_id=space_id
     )
 
     if not chunks:
@@ -219,6 +231,7 @@ async def generate_summary_stream(
     page_start: int | None = None,
     page_end: int | None = None,
     detail_level: str = "standard",
+    space_id: uuid.UUID | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream a summary as SSE events.
 
@@ -228,7 +241,7 @@ async def generate_summary_stream(
       event: done\ndata: <json>\n\n       (sent last)
     """
     chunks, effective_topic = await _retrieve_chunks(
-        db, topic, document_id, page_start, page_end
+        db, topic, document_id, page_start, page_end, space_id=space_id
     )
 
     if not chunks:

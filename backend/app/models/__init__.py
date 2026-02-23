@@ -7,7 +7,9 @@ from app.models.document import (
     QuizAttempt,
     QuizQuestion,
     QuestionType,
+    Space,
     Tag,
+    User,
     document_tags,
 )
 
@@ -20,6 +22,8 @@ __all__ = [
     "QuizAttempt",
     "QuizQuestion",
     "QuestionType",
+    "Space",
     "Tag",
+    "User",
     "document_tags",
 ]

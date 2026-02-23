@@ -3,6 +3,41 @@
 /** ISO-8601 date string returned by the backend */
 export type ISODateString = string;
 
+// ── Auth / User ────────────────────────────────────────
+
+export interface User {
+	id: string;
+	username: string;
+	email: string | null;
+	avatar_url: string | null;
+	created_at: ISODateString;
+}
+
+// ── Spaces ─────────────────────────────────────────────
+
+export interface Space {
+	id: string;
+	name: string;
+	description: string | null;
+	document_count: number;
+	created_at: ISODateString;
+	updated_at: ISODateString;
+}
+
+export interface SpaceCreateRequest {
+	name: string;
+	description?: string | null;
+}
+
+export interface SpaceUpdateRequest {
+	name?: string | null;
+	description?: string | null;
+}
+
+export interface SpaceListResponse {
+	spaces: Space[];
+	total: number;
+}
 // ── Tags ───────────────────────────────────────────────
 
 export interface Tag {

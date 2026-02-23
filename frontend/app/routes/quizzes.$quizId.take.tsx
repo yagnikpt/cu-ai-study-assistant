@@ -32,7 +32,7 @@ function PageSkeleton() {
 // ── Main Page ──────────────────────────────────────────
 
 export default function TakeQuizPage() {
-	const { quizId } = useParams();
+	const { spaceId, quizId } = useParams();
 	const navigate = useNavigate();
 	const [answers, setAnswers] = useState<Record<string, string>>({});
 
@@ -43,15 +43,15 @@ export default function TakeQuizPage() {
 		error,
 	} = useQuery({
 		queryKey: ["quiz", quizId],
-		queryFn: () => getQuiz(quizId!),
-		enabled: !!quizId,
+		queryFn: () => getQuiz(spaceId!, quizId!),
+		enabled: !!quizId && !!spaceId,
 	});
 
 	const submitMut = useMutation({
 		mutationFn: (submissions: AnswerSubmission[]) =>
-			submitAttempt(quizId!, { answers: submissions }),
+			submitAttempt(spaceId!, quizId!, { answers: submissions }),
 		onSuccess: () => {
-			navigate(`/quizzes/${quizId}/results`);
+			navigate(`/spaces/${spaceId}/quizzes/${quizId}/results`);
 		},
 	});
 
@@ -86,7 +86,7 @@ export default function TakeQuizPage() {
 					variant="outline"
 					size="sm"
 					className="mt-4"
-					onClick={() => navigate("/quizzes")}
+					onClick={() => navigate(`/spaces/${spaceId}/quizzes`)}
 				>
 					<ArrowLeft />
 					Back to quizzes
@@ -110,7 +110,7 @@ export default function TakeQuizPage() {
 						</Badge>
 					</div>
 				</div>
-				<Button variant="ghost" size="sm" onClick={() => navigate("/quizzes")}>
+				<Button variant="ghost" size="sm" onClick={() => navigate(`/spaces/${spaceId}/quizzes`)}>
 					<ArrowLeft />
 					Back
 				</Button>

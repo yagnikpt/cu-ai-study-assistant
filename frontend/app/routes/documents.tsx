@@ -12,6 +12,7 @@ import {
 	Upload,
 } from "lucide-react";
 import { type DragEvent, useCallback, useRef, useState } from "react";
+import { useParams } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -72,6 +73,9 @@ import { cn } from "~/lib/utils";
 // ── Main Page ──────────────────────────────────────────
 
 export default function DocumentsPage() {
+	const { spaceId } = useParams<{ spaceId: string }>();
+	if (!spaceId) return null;
+
 	return (
 		<div className="space-y-8">
 			<div>
@@ -81,8 +85,8 @@ export default function DocumentsPage() {
 				</p>
 			</div>
 
-			<UploadSection />
-			<DocumentList />
+			<UploadSection spaceId={spaceId} />
+			<DocumentList spaceId={spaceId} />
 			<TagSection />
 		</div>
 	);
@@ -102,7 +106,7 @@ function PageSkeleton() {
 
 // ── Upload Section ─────────────────────────────────────
 
-function UploadSection() {
+function UploadSection({ spaceId }: { spaceId: string }) {
 	const queryClient = useQueryClient();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [file, setFile] = useState<File | null>(null);
@@ -112,7 +116,7 @@ function UploadSection() {
 
 	const uploadMut = useMutation({
 		mutationFn: (f: File) =>
-			uploadDocument(f, {
+			uploadDocument(spaceId, f, {
 				course_name: courseName || undefined,
 				subject: subject || undefined,
 			}),
@@ -259,13 +263,13 @@ function UploadSection() {
 
 // ── Document List ──────────────────────────────────────
 
-function DocumentList() {
+function DocumentList({ spaceId }: { spaceId: string }) {
 	const [filters, setFilters] = useState<DocumentListParams>({});
 	const [showFilters, setShowFilters] = useState(false);
 
 	const { data, isLoading, isError, error } = useQuery({
 		queryKey: ["documents", filters],
-		queryFn: () => listDocuments(filters),
+		queryFn: () => listDocuments(spaceId, filters),
 		refetchInterval: (query) => {
 			const docs = query.state.data?.documents;
 			if (docs?.some((d) => d.status === "processing")) return 3000;
@@ -317,8 +321,8 @@ function DocumentList() {
 				) : (
 					<div className="space-y-3">
 						{data?.documents.map((doc) => (
-							<DocumentRow key={doc.id} doc={doc} />
-						))}
+						<DocumentRow key={doc.id} doc={doc} spaceId={spaceId} />
+					))}
 					</div>
 				)}
 			</CardContent>
@@ -405,13 +409,13 @@ function StatusIcon({ status }: { status: DocumentStatus }) {
 
 // ── Document Row ───────────────────────────────────────
 
-function DocumentRow({ doc }: { doc: Document }) {
+function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 	const queryClient = useQueryClient();
 	const [showChunks, setShowChunks] = useState(false);
 	const [showTagModal, setShowTagModal] = useState(false);
 
 	const deleteMut = useMutation({
-		mutationFn: () => deleteDocument(doc.id),
+		mutationFn: () => deleteDocument(spaceId, doc.id),
 		onSuccess: () =>
 			setTimeout(
 				() => queryClient.invalidateQueries({ queryKey: ["documents"] }),
@@ -561,12 +565,12 @@ function DocumentRow({ doc }: { doc: Document }) {
 
 			{/* Chunks dialog */}
 			{showChunks && (
-				<ChunkViewer docId={doc.id} onClose={() => setShowChunks(false)} />
+				<ChunkViewer spaceId={spaceId} docId={doc.id} onClose={() => setShowChunks(false)} />
 			)}
 
 			{/* Tag management dialog */}
 			{showTagModal && (
-				<TagAssignDialog doc={doc} onClose={() => setShowTagModal(false)} />
+				<TagAssignDialog spaceId={spaceId} doc={doc} onClose={() => setShowTagModal(false)} />
 			)}
 		</Collapsible>
 	);
@@ -575,15 +579,17 @@ function DocumentRow({ doc }: { doc: Document }) {
 // ── Chunk Viewer Dialog ────────────────────────────────
 
 function ChunkViewer({
+	spaceId,
 	docId,
 	onClose,
 }: {
+	spaceId: string;
 	docId: string;
 	onClose: () => void;
 }) {
 	const { data: chunks, isLoading } = useQuery({
 		queryKey: ["chunks", docId],
-		queryFn: () => getChunks(docId, 0, 100),
+		queryFn: () => getChunks(spaceId, docId, 0, 100),
 	});
 
 	return (
@@ -650,9 +656,11 @@ function ChunkCard({ chunk }: { chunk: DocumentChunk }) {
 // ── Tag Assign Dialog ──────────────────────────────────
 
 function TagAssignDialog({
+	spaceId,
 	doc,
 	onClose,
 }: {
+	spaceId: string;
 	doc: Document;
 	onClose: () => void;
 }) {
@@ -667,7 +675,7 @@ function TagAssignDialog({
 	});
 
 	const assignMut = useMutation({
-		mutationFn: () => addTagsToDocument(doc.id, { tag_ids: selectedTagIds }),
+		mutationFn: () => addTagsToDocument(spaceId, doc.id, { tag_ids: selectedTagIds }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["documents"] });
 			onClose();

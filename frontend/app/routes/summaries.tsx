@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Loader2, Square } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import Markdown from "react-markdown";
+import { useParams } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -27,7 +28,11 @@ import {
 } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
 import { generateSummaryStream, listDocuments } from "~/lib/api";
-import type { DetailLevel, SummarySource, SummaryStreamEvent } from "~/lib/types";
+import type {
+	DetailLevel,
+	SummarySource,
+	SummaryStreamEvent,
+} from "~/lib/types";
 
 // ── Streaming result state ─────────────────────────────
 
@@ -50,10 +55,13 @@ const EMPTY_RESULT: StreamingResult = {
 // ── Main Page ──────────────────────────────────────────
 
 export default function SummariesPage() {
+	const { spaceId } = useParams<{ spaceId: string }>();
 	const [result, setResult] = useState<StreamingResult | null>(null);
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
+
+	if (!spaceId) return null;
 
 	const handleStream = useCallback(
 		(params: {
@@ -71,6 +79,7 @@ export default function SummariesPage() {
 			abortRef.current = abort;
 
 			generateSummaryStream(
+				spaceId,
 				{
 					topic: params.topic || undefined,
 					document_id: params.document_id || undefined,
@@ -93,9 +102,7 @@ export default function SummariesPage() {
 							break;
 						case "token":
 							setResult((prev) =>
-								prev
-									? { ...prev, summary: prev.summary + event.data }
-									: null,
+								prev ? { ...prev, summary: prev.summary + event.data } : null,
 							);
 							break;
 						case "done":
@@ -117,16 +124,14 @@ export default function SummariesPage() {
 					if ((err as Error).name !== "AbortError") {
 						setError((err as Error).message);
 					}
-					setResult((prev) =>
-						prev ? { ...prev, isStreaming: false } : null,
-					);
+					setResult((prev) => (prev ? { ...prev, isStreaming: false } : null));
 				})
 				.finally(() => {
 					setIsStreaming(false);
 					abortRef.current = null;
 				});
 		},
-		[],
+		[spaceId],
 	);
 
 	const handleStop = () => {
@@ -143,6 +148,7 @@ export default function SummariesPage() {
 			</div>
 
 			<SummaryForm
+				spaceId={spaceId}
 				onGenerate={handleStream}
 				isStreaming={isStreaming}
 				onStop={handleStop}
@@ -156,11 +162,13 @@ export default function SummariesPage() {
 // ── Summary Form ───────────────────────────────────────
 
 function SummaryForm({
+	spaceId,
 	onGenerate,
 	isStreaming,
 	onStop,
 	error,
 }: {
+	spaceId: string;
 	onGenerate: (params: {
 		topic?: string;
 		document_id?: string;
@@ -179,8 +187,8 @@ function SummaryForm({
 	const [pageEnd, setPageEnd] = useState("");
 
 	const { data: docData } = useQuery({
-		queryKey: ["documents", { status: "ready", limit: 100 }],
-		queryFn: () => listDocuments({ status: "ready", limit: 100 }),
+		queryKey: ["documents", spaceId, { status: "ready", limit: 100 }],
+		queryFn: () => listDocuments(spaceId!, { status: "ready", limit: 100 }),
 	});
 	const docs = docData?.documents ?? [];
 
@@ -284,10 +292,7 @@ function SummaryForm({
 					)}
 
 					<div className="flex gap-2">
-						<Button
-							type="submit"
-							disabled={(!topic && !docId) || isStreaming}
-						>
+						<Button type="submit" disabled={(!topic && !docId) || isStreaming}>
 							{isStreaming && <Loader2 className="animate-spin" />}
 							Generate summary
 						</Button>
@@ -322,9 +327,7 @@ function SummaryResult({ result }: { result: StreamingResult }) {
 						{result.isStreaming && (
 							<Loader2 className="size-4 animate-spin text-muted-foreground" />
 						)}
-						{result.model && (
-							<Badge variant="outline">{result.model}</Badge>
-						)}
+						{result.model && <Badge variant="outline">{result.model}</Badge>}
 					</div>
 				</div>
 			</CardHeader>

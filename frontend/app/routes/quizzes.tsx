@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, GraduationCap, Loader2, Play, Plus } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import { Button } from "~/components/ui/button";
 import {
 	Card,
@@ -32,6 +32,9 @@ import { cn } from "~/lib/utils";
 // ── Main Page ──────────────────────────────────────────
 
 export default function QuizzesPage() {
+	const { spaceId } = useParams<{ spaceId: string }>();
+	if (!spaceId) return null;
+
 	return (
 		<div className="space-y-8">
 			<div>
@@ -41,15 +44,15 @@ export default function QuizzesPage() {
 				</p>
 			</div>
 
-			<GenerateSection />
-			<QuizList />
+			<GenerateSection spaceId={spaceId} />
+			<QuizList spaceId={spaceId} />
 		</div>
 	);
 }
 
 // ── Generate Section ───────────────────────────────────
 
-function GenerateSection() {
+function GenerateSection({ spaceId }: { spaceId: string }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [docId, setDocId] = useState("");
@@ -58,14 +61,14 @@ function GenerateSection() {
 	const [types, setTypes] = useState<QuestionType[]>(["mcq"]);
 
 	const { data: docData } = useQuery({
-		queryKey: ["documents", { status: "ready", limit: 100 }],
-		queryFn: () => listDocuments({ status: "ready", limit: 100 }),
+		queryKey: ["documents", spaceId, { status: "ready", limit: 100 }],
+		queryFn: () => listDocuments(spaceId, { status: "ready", limit: 100 }),
 	});
 	const docs = docData?.documents ?? [];
 
 	const genMut = useMutation({
 		mutationFn: () =>
-			generateQuiz({
+			generateQuiz(spaceId, {
 				document_id: docId || undefined,
 				topic: topic || undefined,
 				question_count: count,
@@ -73,7 +76,7 @@ function GenerateSection() {
 			}),
 		onSuccess: (quiz) => {
 			queryClient.invalidateQueries({ queryKey: ["quizzes"] });
-			navigate(`/quizzes/${quiz.id}/take`);
+			navigate(`/spaces/${spaceId}/quizzes/${quiz.id}/take`);
 		},
 	});
 
@@ -197,12 +200,12 @@ function GenerateSection() {
 
 // ── Quiz List ──────────────────────────────────────────
 
-function QuizList() {
+function QuizList({ spaceId }: { spaceId: string }) {
 	const navigate = useNavigate();
 
 	const { data, isLoading, isError, error } = useQuery({
-		queryKey: ["quizzes"],
-		queryFn: () => listQuizzes(),
+		queryKey: ["quizzes", spaceId],
+		queryFn: () => listQuizzes(spaceId),
 	});
 
 	return (
@@ -257,7 +260,7 @@ function QuizList() {
 								<div className="ml-4 flex shrink-0 gap-2">
 									<Button
 										size="sm"
-										onClick={() => navigate(`/quizzes/${q.id}/take`)}
+										onClick={() => navigate(`/spaces/${spaceId}/quizzes/${q.id}/take`)}
 									>
 										<Play />
 										Take
@@ -265,7 +268,7 @@ function QuizList() {
 									<Button
 										variant="outline"
 										size="sm"
-										onClick={() => navigate(`/quizzes/${q.id}/results`)}
+										onClick={() => navigate(`/spaces/${spaceId}/quizzes/${q.id}/results`)}
 									>
 										<BarChart3 />
 										Results

@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import DBSession
-from app.models import Quiz, QuizQuestion
+from app.models import Document, Quiz, QuizQuestion, Space
 from app.schemas.quiz import (
     QuizAttemptRequest,
     QuizAttemptResponse,
@@ -22,16 +22,16 @@ from app.schemas.quiz import (
 )
 from app.services.quiz_service import generate_quiz, grade_attempt, get_quiz_results
 
-router = APIRouter(prefix="/api/v1/quizzes", tags=["quizzes"])
+router = APIRouter(prefix="/api/v1/spaces/{space_id}/quizzes", tags=["quizzes"])
 
 
 @router.post("/generate", response_model=QuizResponse, status_code=201)
-async def create_quiz(db: DBSession, body: QuizGenerateRequest):
-    """Generate a quiz from course materials.
+async def create_quiz(db: DBSession, space_id: uuid.UUID, body: QuizGenerateRequest):
+    """Generate a quiz from course materials in this space.
 
     Provide either:
     - `document_id`: Generate from a specific document
-    - `topic`: Generate questions about a topic (searches all docs)
+    - `topic`: Generate questions about a topic (searches space docs)
     - Both: Generate topic-specific questions from a specific document
 
     Questions are mapped back to source material with page references.
@@ -42,6 +42,20 @@ async def create_quiz(db: DBSession, body: QuizGenerateRequest):
             detail="Provide either 'document_id' or 'topic' (or both).",
         )
 
+    # Validate space exists
+    space = await db.get(Space, space_id)
+    if not space:
+        raise HTTPException(status_code=404, detail="Space not found")
+
+    # Validate document belongs to space if provided
+    if body.document_id:
+        doc = await db.get(Document, body.document_id)
+        if not doc or doc.space_id != space_id:
+            raise HTTPException(
+                status_code=400,
+                detail="The specified document does not belong to this space.",
+            )
+
     try:
         quiz = await generate_quiz(
             db=db,
@@ -49,6 +63,7 @@ async def create_quiz(db: DBSession, body: QuizGenerateRequest):
             topic=body.topic,
             question_count=body.question_count,
             question_types=body.question_types,
+            space_id=space_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -86,12 +101,17 @@ async def create_quiz(db: DBSession, body: QuizGenerateRequest):
 @router.get("/", response_model=QuizListResponse)
 async def list_quizzes(
     db: DBSession,
+    space_id: uuid.UUID,
     document_id: uuid.UUID | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
-    """List all generated quizzes."""
-    query = select(Quiz).options(selectinload(Quiz.questions))
+    """List quizzes in this space."""
+    query = (
+        select(Quiz)
+        .options(selectinload(Quiz.questions))
+        .where(Quiz.space_id == space_id)
+    )
 
     if document_id:
         query = query.where(Quiz.document_id == document_id)
@@ -130,14 +150,14 @@ async def list_quizzes(
 
 
 @router.get("/{quiz_id}", response_model=QuizResponse)
-async def get_quiz(db: DBSession, quiz_id: uuid.UUID):
+async def get_quiz(db: DBSession, space_id: uuid.UUID, quiz_id: uuid.UUID):
     """Get a quiz with its questions (without answers - for taking the quiz)."""
     result = await db.execute(
         select(Quiz).options(selectinload(Quiz.questions)).where(Quiz.id == quiz_id)
     )
     quiz = result.scalar_one_or_none()
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    if not quiz or quiz.space_id != space_id:
+        raise HTTPException(status_code=404, detail="Quiz not found in this space")
 
     return QuizResponse(
         id=quiz.id,
@@ -160,7 +180,9 @@ async def get_quiz(db: DBSession, quiz_id: uuid.UUID):
 
 
 @router.post("/{quiz_id}/attempt", response_model=QuizAttemptResponse)
-async def submit_attempt(db: DBSession, quiz_id: uuid.UUID, body: QuizAttemptRequest):
+async def submit_attempt(
+    db: DBSession, space_id: uuid.UUID, quiz_id: uuid.UUID, body: QuizAttemptRequest
+):
     """Submit answers for a quiz and get graded feedback.
 
     Each answer includes:
@@ -187,7 +209,7 @@ async def submit_attempt(db: DBSession, quiz_id: uuid.UUID, body: QuizAttemptReq
 
 
 @router.get("/{quiz_id}/results", response_model=QuizResultsResponse)
-async def get_results(db: DBSession, quiz_id: uuid.UUID):
+async def get_results(db: DBSession, space_id: uuid.UUID, quiz_id: uuid.UUID):
     """Get aggregated results for a quiz including topic strength analysis.
 
     Shows which topics need reinforcement based on past attempts.

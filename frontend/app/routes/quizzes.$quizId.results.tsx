@@ -34,13 +34,13 @@ function PageSkeleton() {
 // ── Main Page ──────────────────────────────────────────
 
 export default function QuizResultsPage() {
-	const { quizId } = useParams();
+	const { spaceId, quizId } = useParams();
 	const navigate = useNavigate();
 
 	const { data, isLoading, isError, error } = useQuery({
 		queryKey: ["quiz-results", quizId],
-		queryFn: () => getQuizResults(quizId!),
-		enabled: !!quizId,
+		queryFn: () => getQuizResults(spaceId!, quizId!),
+		enabled: !!quizId && !!spaceId,
 	});
 
 	if (isLoading) return <PageSkeleton />;
@@ -55,7 +55,7 @@ export default function QuizResultsPage() {
 					variant="outline"
 					size="sm"
 					className="mt-4"
-					onClick={() => navigate("/quizzes")}
+					onClick={() => navigate(`/spaces/${spaceId}/quizzes`)}
 				>
 					<ArrowLeft />
 					Back to quizzes
@@ -79,14 +79,14 @@ export default function QuizResultsPage() {
 					<p className="text-muted-foreground">{data.title}</p>
 				</div>
 				<div className="flex gap-2">
-					<Button size="sm" onClick={() => navigate(`/quizzes/${quizId}/take`)}>
+					<Button size="sm" onClick={() => navigate(`/spaces/${spaceId}/quizzes/${quizId}/take`)}>
 						<RotateCcw />
 						Retake
 					</Button>
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => navigate("/quizzes")}
+							onClick={() => navigate(`/spaces/${spaceId}/quizzes`)}
 					>
 						<ArrowLeft />
 						Back

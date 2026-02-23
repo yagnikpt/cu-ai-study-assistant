@@ -22,6 +22,59 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    github_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    # Relationships
+    spaces: Mapped[list["Space"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
+
+
+class Space(Base):
+    __tablename__ = "spaces"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    # Relationships
+    owner: Mapped["User | None"] = relationship(back_populates="spaces")
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
+    quizzes: Mapped[list["Quiz"]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
+
+
 class DocumentStatus(str, enum.Enum):
     PROCESSING = "processing"
     READY = "ready"
@@ -75,6 +128,11 @@ class Document(Base):
         default=DocumentStatus.PROCESSING,
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    space_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
     )
@@ -83,6 +141,7 @@ class Document(Base):
     )
 
     # Relationships
+    space: Mapped["Space | None"] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
@@ -149,6 +208,11 @@ class Quiz(Base):
         ForeignKey("documents.id", ondelete="SET NULL"),
         nullable=True,
     )
+    space_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     topic: Mapped[str | None] = mapped_column(String(500), nullable=True)
     question_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -156,6 +220,7 @@ class Quiz(Base):
     )
 
     # Relationships
+    space: Mapped["Space | None"] = relationship(back_populates="quizzes")
     document: Mapped["Document | None"] = relationship(back_populates="quizzes")
     questions: Mapped[list["QuizQuestion"]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan"
