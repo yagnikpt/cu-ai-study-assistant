@@ -195,9 +195,9 @@ async def list_documents(
     query = select(Document).options(selectinload(Document.tags))
 
     if course_name:
-        query = query.where(Document.course_name == course_name)
+        query = query.where(Document.course_name.ilike(f"{course_name}%"))
     if subject:
-        query = query.where(Document.subject == subject)
+        query = query.where(Document.subject.ilike(f"{subject}%"))
     if status:
         query = query.where(Document.status == status)
     if tag_id:

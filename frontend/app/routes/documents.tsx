@@ -65,7 +65,6 @@ import type {
 	Document,
 	DocumentChunk,
 	DocumentListParams,
-	DocumentListResponse,
 	DocumentStatus,
 } from "~/lib/types";
 import { cn } from "~/lib/utils";
@@ -150,7 +149,7 @@ function UploadSection() {
 		setFile(selected);
 	};
 
-	const handleSubmit = (e: React.FormEvent) => {
+	const handleSubmit = (e: React.SubmitEvent) => {
 		e.preventDefault();
 		if (file) uploadMut.mutate(file);
 	};
