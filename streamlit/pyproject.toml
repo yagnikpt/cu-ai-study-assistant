@@ -1,0 +1,10 @@
+[project]
+name = "cu-study-assistant-streamlit"
+version = "0.1.0"
+description = "Streamlit dev UI for CU Study Assistant"
+readme = "../README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "streamlit>=1.54.0",
+    "httpx>=0.28.0",
+]

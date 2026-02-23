@@ -1,4 +1,8 @@
-"""Entry point for the AI Study Assistant API server."""
+"""Entry point for the AI Study Assistant API server.
+
+Run from the backend/ directory:
+    uv run python main.py
+"""
 
 import uvicorn
 

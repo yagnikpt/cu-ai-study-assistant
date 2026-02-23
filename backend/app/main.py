@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import documents, tags, qa, summaries, quizzes
@@ -53,6 +54,19 @@ app.include_router(tags.router)
 app.include_router(qa.router)
 app.include_router(summaries.router)
 app.include_router(quizzes.router)
+
+# CORS – allow React dev server and Streamlit
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",  # CRA / other dev server
+        "http://localhost:8501",  # Streamlit
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", tags=["health"])

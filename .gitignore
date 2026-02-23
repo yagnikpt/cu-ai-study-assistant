@@ -22,3 +22,9 @@ uploads/
 # IDE
 .idea/
 .vscode/
+
+# uv lockfiles (per-project)
+uv.lock
+
+# Node / Frontend
+node_modules/

@@ -1,6 +1,7 @@
 """CU Study Assistant – Streamlit entry point.
 
-Run with: uv run streamlit run streamlit_app.py
+Run from the streamlit/ directory:
+    uv run streamlit run streamlit_app.py
 """
 
 import streamlit as st
