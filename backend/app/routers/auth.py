@@ -131,13 +131,17 @@ async def github_callback(db: DBSession, code: str | None = None):
     # Step 4: Create JWT and set cookie
     token = create_jwt(user.id)
 
+    # Cross-site (e.g. Netlify frontend ↔ Fly.dev backend) requires
+    # Secure=True + SameSite=None for cookies to be sent on fetch() calls
+    is_production = settings.frontend_url.startswith("https")
+
     response = RedirectResponse(url=f"{settings.frontend_url}/spaces", status_code=302)
     response.set_cookie(
         key="session",
         value=token,
         httponly=True,
-        secure=False,  # Set True in production with HTTPS
-        samesite="lax",
+        secure=is_production,
+        samesite="none" if is_production else "lax",
         max_age=settings.jwt_expiry_hours * 3600,
         path="/",
     )
@@ -154,6 +158,12 @@ async def get_me(request: Request, db: DBSession):
 @router.post("/api/v1/auth/logout")
 async def logout():
     """Clear the session cookie."""
+    is_production = settings.frontend_url.startswith("https")
     response = RedirectResponse(url=f"{settings.frontend_url}/login", status_code=302)
-    response.delete_cookie("session", path="/")
+    response.delete_cookie(
+        "session",
+        path="/",
+        secure=is_production,
+        samesite="none" if is_production else "lax",
+    )
     return response
