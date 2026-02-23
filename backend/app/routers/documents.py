@@ -1,12 +1,11 @@
 """Document management router.
 
 Handles file uploads, document CRUD, tagging, and chunk viewing.
+PDFs are processed entirely in memory — no files are saved to disk.
 """
 
 import logging
-import shutil
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
@@ -14,7 +13,14 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies import DBSession
-from app.models import Document, DocumentChunk, DocumentStatus, Space, Tag, document_tags
+from app.models import (
+    Document,
+    DocumentChunk,
+    DocumentStatus,
+    Space,
+    Tag,
+    document_tags,
+)
 from app.schemas.document import (
     DocumentChunkResponse,
     DocumentListResponse,
@@ -29,8 +35,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/spaces/{space_id}/documents", tags=["documents"])
 
 
-async def _run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> None:
-    """Background task: parse PDF, chunk, embed, update document status.
+async def _run_ingestion_pipeline(document_id: uuid.UUID, pdf_bytes: bytes) -> None:
+    """Background task: parse PDF from bytes, chunk, embed, update document status.
 
     This runs outside the request lifecycle with its own DB session.
     """
@@ -46,9 +52,9 @@ async def _run_ingestion_pipeline(document_id: uuid.UUID, file_path: str) -> Non
                 logger.error(f"Document {document_id} not found for ingestion")
                 return
 
-            # Step 1: Parse PDF
+            # Step 1: Parse PDF from bytes (no disk I/O)
             logger.info(f"Parsing PDF: {doc.original_filename}")
-            parsed = parse_pdf(file_path)
+            parsed = parse_pdf(pdf_bytes)
             doc.page_count = parsed.page_count
 
             # Step 2: Chunk the parsed pages
@@ -111,7 +117,7 @@ async def upload_document(
 ):
     """Upload a PDF document and start the ingestion pipeline.
 
-    The document will be processed in the background:
+    The document will be processed entirely in memory (no files saved to disk):
     1. PDF text extraction
     2. Semantic chunking
     3. Embedding generation
@@ -132,32 +138,20 @@ async def upload_document(
             detail=f"File too large. Maximum size is {settings.max_upload_size_mb}MB.",
         )
 
-    # Generate unique filename and save
-    file_id = uuid.uuid4()
-    safe_filename = f"{file_id}.pdf"
-    upload_dir = settings.upload_dir
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / safe_filename
-
-    try:
-        with open(file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}") from e
-
-    # Get actual file size
-    file_size = file_path.stat().st_size
+    # Read file into memory
+    pdf_bytes = await file.read()
+    file_size = len(pdf_bytes)
 
     # Validate space exists
     space = await db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
 
-    # Create document record
+    # Create document record (no file_path needed)
     doc = Document(
-        filename=safe_filename,
+        filename=f"{uuid.uuid4()}.pdf",
         original_filename=file.filename,
-        file_path=str(file_path),
+        file_path="",  # no disk storage
         file_size_bytes=file_size,
         course_name=course_name,
         subject=subject,
@@ -167,8 +161,8 @@ async def upload_document(
     db.add(doc)
     await db.commit()
 
-    # Kick off background ingestion (document must be committed before background task runs)
-    background_tasks.add_task(_run_ingestion_pipeline, doc.id, str(file_path))
+    # Kick off background ingestion with in-memory bytes
+    background_tasks.add_task(_run_ingestion_pipeline, doc.id, pdf_bytes)
 
     # Return response with chunk_count=0 since processing hasn't started
     return DocumentResponse(
@@ -349,21 +343,10 @@ async def update_document(
 
 @router.delete("/{document_id}", status_code=204)
 async def delete_document(db: DBSession, document_id: uuid.UUID):
-    """Delete a document and all its chunks and embeddings.
-
-    Also removes the uploaded file from disk.
-    """
+    """Delete a document and all its chunks and embeddings."""
     doc = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    # Remove file from disk
-    try:
-        file_path = Path(doc.file_path)
-        if file_path.exists():
-            file_path.unlink()
-    except Exception as e:
-        logger.warning(f"Failed to delete file {doc.file_path}: {e}")
 
     await db.delete(doc)
 

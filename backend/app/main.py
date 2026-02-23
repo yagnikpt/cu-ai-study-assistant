@@ -22,9 +22,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup and shutdown logic."""
     # Startup
-    settings.upload_dir.mkdir(parents=True, exist_ok=True)
     logger.info("AI Study Assistant API starting up")
-    logger.info(f"Upload directory: {settings.upload_dir.resolve()}")
     logger.info(f"Generation model: {settings.generation_model}")
     logger.info(f"Embedding model: {settings.embedding_model}")
 
