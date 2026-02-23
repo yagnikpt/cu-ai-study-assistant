@@ -62,7 +62,7 @@ app.add_middleware(
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",  # CRA / other dev server
         "http://localhost:8501",  # Streamlit
-        "*",
+        "https://cu-ai-study-assistant.netlify.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],

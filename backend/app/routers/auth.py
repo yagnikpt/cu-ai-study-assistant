@@ -21,6 +21,7 @@ router = APIRouter(tags=["auth"])
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
+GITHUB_USER_EMAILS_URL = "https://api.github.com/user/emails"
 
 
 @router.get("/auth/github/login")
@@ -72,23 +73,36 @@ async def github_callback(db: DBSession, code: str | None = None):
         error = token_data.get("error_description", "Unknown error")
         raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {error}")
 
-    # Step 2: Fetch user profile
-    async with httpx.AsyncClient() as client:
-        user_resp = await client.get(
-            GITHUB_USER_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-            },
-        )
+    auth_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
 
-    if user_resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to fetch GitHub profile")
+    # Step 2: Fetch user profile and primary email
+    async with httpx.AsyncClient() as client:
+        user_resp = await client.get(GITHUB_USER_URL, headers=auth_headers)
+
+        if user_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502, detail="Failed to fetch GitHub profile"
+            )
+
+        # Fetch emails from /user/emails and pick the primary one
+        emails_resp = await client.get(GITHUB_USER_EMAILS_URL, headers=auth_headers)
 
     gh_user = user_resp.json()
     github_id = gh_user["id"]
     username = gh_user["login"]
-    email = gh_user.get("email")
+
+    email: str | None = None
+    if emails_resp.status_code == 200:
+        emails: list[dict] = emails_resp.json()
+        primary = next((e for e in emails if e.get("primary")), None)
+        email = primary["email"] if primary else None
+
+    # Fall back to the email on the public profile
+    if not email:
+        email = gh_user.get("email")
     avatar_url = gh_user.get("avatar_url")
 
     # Step 3: Upsert user
