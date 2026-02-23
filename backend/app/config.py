@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
 
     # Models
-    embedding_model: str = "text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
     generation_model: str = "gemini-2.5-flash-lite"
 
     # Embedding dimensions (gemini-embedding-001 with output_dimensionality=768)
@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     chunk_overlap: int = 100
 
     # File uploads
-    upload_dir: Path = Path("./uploads")
     max_upload_size_mb: int = 50
 
     # GitHub OAuth

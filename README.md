@@ -309,7 +309,6 @@ B-tree indexes on FKs/status/dates, auto-update triggers on `updated_at` columns
 | `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 | `CHUNK_SIZE` | `700` | Tokens per chunk |
 | `CHUNK_OVERLAP` | `100` | Overlap tokens |
-| `UPLOAD_DIR` | `./uploads` | PDF storage path |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Max upload size |
 
 ### Frontend

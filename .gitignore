@@ -28,3 +28,6 @@ uv.lock
 
 # Node / Frontend
 node_modules/
+
+# Fly.io
+fly.toml
