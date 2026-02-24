@@ -73,6 +73,9 @@ class Space(Base):
     quizzes: Mapped[list["Quiz"]] = relationship(
         back_populates="space", cascade="all, delete-orphan"
     )
+    study_plans: Mapped[list["StudyPlan"]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
 
 
 class DocumentStatus(str, enum.Enum):
@@ -286,3 +289,112 @@ class QuizAttempt(Base):
     # Relationships
     quiz: Mapped["Quiz"] = relationship()
     question: Mapped["QuizQuestion"] = relationship(back_populates="attempts")
+
+
+# ── Study Plan Models ──────────────────────────────────
+
+
+class StudyPlanStatus(str, enum.Enum):
+    GENERATING = "generating"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class TopicPriority(str, enum.Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class TopicDifficulty(str, enum.Enum):
+    HARD = "hard"
+    MEDIUM = "medium"
+    EASY = "easy"
+
+
+class StudyPlan(Base):
+    __tablename__ = "study_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    exam_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    daily_hours: Mapped[float] = mapped_column(default=2.0)
+    status: Mapped[StudyPlanStatus] = mapped_column(
+        Enum(
+            StudyPlanStatus,
+            name="study_plan_status",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        default=StudyPlanStatus.GENERATING,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    # Relationships
+    space: Mapped["Space"] = relationship(back_populates="study_plans")
+    topics: Mapped[list["StudyTopic"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="StudyTopic.order_index",
+    )
+
+
+class StudyTopic(Base):
+    __tablename__ = "study_topics"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("study_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    priority: Mapped[TopicPriority] = mapped_column(
+        Enum(
+            TopicPriority,
+            name="topic_priority",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        default=TopicPriority.MEDIUM,
+    )
+    difficulty: Mapped[TopicDifficulty] = mapped_column(
+        Enum(
+            TopicDifficulty,
+            name="topic_difficulty",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        default=TopicDifficulty.MEDIUM,
+    )
+    estimated_hours: Mapped[float] = mapped_column(default=1.0)
+    source_pages: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    completed: Mapped[bool] = mapped_column(default=False)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+    # Relationships
+    plan: Mapped["StudyPlan"] = relationship(back_populates="topics")

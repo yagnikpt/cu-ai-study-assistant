@@ -19,6 +19,10 @@ import type {
 	SpaceCreateRequest,
 	SpaceListResponse,
 	SpaceUpdateRequest,
+	StudyPlan,
+	StudyPlanGenerateRequest,
+	StudyPlanListResponse,
+	StudyTopic,
 	SummaryRequest,
 	SummaryResponse,
 	SummaryStreamEvent,
@@ -505,4 +509,71 @@ export async function getQuizResults(
 		},
 	);
 	return handle<QuizResultsResponse>(resp);
+}
+
+// ── Study Plans ────────────────────────────────────────
+
+export async function generateStudyPlan(
+	spaceId: string,
+	data: StudyPlanGenerateRequest,
+): Promise<StudyPlan> {
+	const resp = await fetch(url(`/spaces/${spaceId}/study-plans/generate`), {
+		...defaultOpts,
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+		signal: timeoutSignal(),
+	});
+	return handle<StudyPlan>(resp);
+}
+
+export async function listStudyPlans(
+	spaceId: string,
+): Promise<StudyPlanListResponse> {
+	const resp = await fetch(url(`/spaces/${spaceId}/study-plans/`), {
+		...defaultOpts,
+		signal: timeoutSignal(),
+	});
+	return handle<StudyPlanListResponse>(resp);
+}
+
+export async function getStudyPlan(
+	spaceId: string,
+	planId: string,
+): Promise<StudyPlan> {
+	const resp = await fetch(url(`/spaces/${spaceId}/study-plans/${planId}`), {
+		...defaultOpts,
+		signal: timeoutSignal(),
+	});
+	return handle<StudyPlan>(resp);
+}
+
+export async function toggleTopicComplete(
+	spaceId: string,
+	planId: string,
+	topicId: string,
+	completed: boolean,
+): Promise<StudyTopic> {
+	const resp = await fetch(
+		url(`/spaces/${spaceId}/study-plans/${planId}/topics/${topicId}`),
+		{
+			...defaultOpts,
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ completed }),
+			signal: timeoutSignal(),
+		},
+	);
+	return handle<StudyTopic>(resp);
+}
+
+export async function deleteStudyPlan(
+	spaceId: string,
+	planId: string,
+): Promise<void> {
+	await fetch(url(`/spaces/${spaceId}/study-plans/${planId}`), {
+		...defaultOpts,
+		method: "DELETE",
+		signal: timeoutSignal(),
+	});
 }

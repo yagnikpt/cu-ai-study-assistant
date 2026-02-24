@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowLeft,
+	CalendarDays,
 	FileText,
 	GraduationCap,
 	LogOut,
@@ -71,6 +72,11 @@ function LayoutContent() {
 			to: `/spaces/${spaceId}/quizzes`,
 			label: "Quizzes",
 			icon: GraduationCap,
+		},
+		{
+			to: `/spaces/${spaceId}/study-plans`,
+			label: "Study Plan",
+			icon: CalendarDays,
 		},
 	] as const;
 

@@ -310,3 +310,53 @@ export interface QuizResultsResponse {
 	best_score: number;
 	topic_strengths: TopicStrength[];
 }
+
+// ── Study Plans ───────────────────────────────────────
+
+export type TopicPriority = "high" | "medium" | "low";
+export type TopicDifficulty = "hard" | "medium" | "easy";
+
+export interface StudyTopic {
+	id: string;
+	title: string;
+	description: string;
+	priority: TopicPriority;
+	difficulty: TopicDifficulty;
+	estimated_hours: number;
+	source_pages: string | null;
+	order_index: number;
+	completed: boolean;
+	completed_at: ISODateString | null;
+}
+
+export interface StudySession {
+	date: string;
+	topic_id: string;
+	topic_title: string;
+	session_type: "learn" | "review";
+	duration_hours: number;
+}
+
+export interface StudyPlan {
+	id: string;
+	title: string;
+	exam_date: ISODateString | null;
+	daily_hours: number;
+	status: "generating" | "ready" | "failed";
+	error_message: string | null;
+	topics: StudyTopic[];
+	schedule: StudySession[];
+	created_at: ISODateString;
+	updated_at: ISODateString;
+}
+
+export interface StudyPlanListResponse {
+	plans: StudyPlan[];
+	total: number;
+}
+
+export interface StudyPlanGenerateRequest {
+	document_ids?: string[] | null;
+	exam_date?: string | null;
+	daily_hours?: number;
+}

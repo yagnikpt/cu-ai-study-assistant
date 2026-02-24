@@ -8,7 +8,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import auth, documents, qa, quizzes, spaces, summaries, tags
+from app.routers import (
+    auth,
+    documents,
+    qa,
+    quizzes,
+    spaces,
+    study_plans,
+    summaries,
+    tags,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +63,7 @@ app.include_router(tags.router)
 app.include_router(qa.router)
 app.include_router(summaries.router)
 app.include_router(quizzes.router)
+app.include_router(study_plans.router)
 
 # CORS – allow React dev server and Streamlit
 app.add_middleware(

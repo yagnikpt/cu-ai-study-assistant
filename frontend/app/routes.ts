@@ -21,6 +21,7 @@ export default [
 		route("spaces/:spaceId/qa", "routes/qa.tsx"),
 		route("spaces/:spaceId/summaries", "routes/summaries.tsx"),
 		route("spaces/:spaceId/quizzes", "routes/quizzes.tsx"),
+		route("spaces/:spaceId/study-plans", "routes/study-plans.tsx"),
 		route(
 			"spaces/:spaceId/quizzes/:quizId/take",
 			"routes/quizzes.$quizId.take.tsx",

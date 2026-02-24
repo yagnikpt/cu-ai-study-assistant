@@ -4,7 +4,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 
 from app.auth import create_jwt, get_current_user
@@ -159,7 +159,7 @@ async def get_me(request: Request, db: DBSession):
 async def logout():
     """Clear the session cookie."""
     is_production = settings.frontend_url.startswith("https")
-    response = RedirectResponse(url=f"{settings.frontend_url}/login", status_code=302)
+    response = JSONResponse(content={"detail": "Logged out"})
     response.delete_cookie(
         "session",
         path="/",
