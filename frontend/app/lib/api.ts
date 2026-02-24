@@ -6,6 +6,7 @@ import type {
 	DocumentListParams,
 	DocumentListResponse,
 	DocumentTagsUpdateRequest,
+	ProfileAnalytics,
 	QAStreamEvent,
 	Quiz,
 	QuizAttemptRequest,
@@ -576,4 +577,14 @@ export async function deleteStudyPlan(
 		method: "DELETE",
 		signal: timeoutSignal(),
 	});
+}
+
+// ── Analytics ──────────────────────────────────────────
+
+export async function getProfileAnalytics(): Promise<ProfileAnalytics> {
+	const resp = await fetch(url("/analytics/profile"), {
+		...defaultOpts,
+		signal: timeoutSignal(),
+	});
+	return handle<ProfileAnalytics>(resp);
 }

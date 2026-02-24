@@ -360,3 +360,49 @@ export interface StudyPlanGenerateRequest {
 	exam_date?: string | null;
 	daily_hours?: number;
 }
+
+// ── Analytics ─────────────────────────────────────────
+
+export interface DocumentStats {
+	total: number;
+	ready: number;
+	processing: number;
+	failed: number;
+}
+
+export interface QuizScorePoint {
+	date: string;
+	score: number;
+}
+
+export interface TopicStrengthItem {
+	topic: string;
+	accuracy: number;
+	total_questions: number;
+}
+
+export interface StudyPlanAnalytics {
+	total_plans: number;
+	topics_total: number;
+	topics_completed: number;
+	estimated_hours: number;
+}
+
+export interface ActivityDay {
+	date: string;
+	documents: number;
+	quizzes: number;
+	plans: number;
+}
+
+export interface ProfileAnalytics {
+	spaces_count: number;
+	document_stats: DocumentStats;
+	quiz_count: number;
+	quiz_attempts_count: number;
+	quiz_avg_score: number;
+	quiz_score_trend: QuizScorePoint[];
+	topic_strengths: TopicStrengthItem[];
+	study_plan_stats: StudyPlanAnalytics;
+	activity: ActivityDay[];
+}
