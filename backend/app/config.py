@@ -11,15 +11,19 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://study_assistant:study_assistant@localhost:5432/study_assistant"
 
-    # Gemini AI
-    gemini_api_key: str = ""
+    # GCP
+    gcp_project_id: str = ""
+    gcp_location: str = "us-central1"
+    gcs_bucket_name: str = ""
 
     # Models
     embedding_model: str = "gemini-embedding-001"
     generation_model: str = "gemini-2.5-flash-lite"
+    multimodal_embedding_model: str = "multimodalembedding@001"
 
-    # Embedding dimensions (gemini-embedding-001 with output_dimensionality=768)
-    embedding_dimensions: int = 768
+    # Embedding dimensions
+    embedding_dimensions: int = 768  # gemini-embedding-001
+    image_embedding_dimensions: int = 1408  # multimodalembedding@001
 
     # Chunking
     chunk_size: int = 700
@@ -37,8 +41,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiry_hours: int = 72
 
-    # Frontend URL (for OAuth redirect)
-    frontend_url: str = "http://localhost:5173"
+    # Static files directory (set in production to serve frontend build)
+    static_dir: str = ""
+
+    # Environment
+    environment: str = "development"
 
     @property
     def max_upload_size_bytes(self) -> int:

@@ -8,7 +8,12 @@ from sqlalchemy import select
 
 from app.dependencies import DBSession
 from app.models import Document, Space
-from app.schemas.summary import SummaryRequest, SummaryResponse, SummarySource
+from app.schemas.summary import (
+    SummaryRequest,
+    SummaryResponse,
+    SummarySource,
+    SummaryImageReference,
+)
 from app.services.summary_service import generate_summary, generate_summary_stream
 
 router = APIRouter(prefix="/api/v1/spaces/{space_id}/summaries", tags=["summaries"])
@@ -77,6 +82,7 @@ async def create_summary(db: DBSession, space_id: uuid.UUID, body: SummaryReques
         summary=result["summary"],
         topic=result["topic"],
         sources=[SummarySource(**s) for s in result["sources"]],
+        images=[SummaryImageReference(**i) for i in result.get("images", [])],
         model=result["model"],
     )
 
@@ -89,6 +95,7 @@ async def create_summary_stream(
 
     SSE events emitted:
       - `meta`: JSON object with `topic` and `sources` (sent first)
+      - `images`: JSON array of image references (sent after meta, optional)
       - `token`: JSON string with a text fragment (many times)
       - `done`: JSON object with `model` field (sent last)
     """

@@ -15,6 +15,9 @@ export default [
 	// Spaces list — auth required (handled in AuthGate layout)
 	route("spaces", "routes/spaces.tsx"),
 
+	// Analytics — global, auth required
+	route("analytics", "routes/analytics.tsx"),
+
 	// All pages inside a space share the sidebar layout
 	layout("components/layout.tsx", [
 		route("spaces/:spaceId/documents", "routes/documents.tsx"),

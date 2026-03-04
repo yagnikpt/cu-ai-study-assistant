@@ -3,6 +3,7 @@ import type {
 	AskResponse,
 	Document,
 	DocumentChunk,
+	DocumentImage,
 	DocumentListParams,
 	DocumentListResponse,
 	DocumentTagsUpdateRequest,
@@ -167,18 +168,12 @@ export async function deleteSpace(spaceId: string): Promise<void> {
 export async function uploadDocument(
 	spaceId: string,
 	file: File,
-	meta?: { course_name?: string; subject?: string },
 ): Promise<Document> {
-	const params = new URLSearchParams();
-	if (meta?.course_name) params.set("course_name", meta.course_name);
-	if (meta?.subject) params.set("subject", meta.subject);
-
 	const body = new FormData();
 	body.append("file", file);
 
-	const qs = params.toString();
 	const resp = await fetch(
-		url(`/spaces/${spaceId}/documents/${qs ? `?${qs}` : ""}`),
+		url(`/spaces/${spaceId}/documents/`),
 		{
 			...defaultOpts,
 			method: "POST",
@@ -255,18 +250,32 @@ export async function getChunks(
 	return handle<DocumentChunk[]>(resp);
 }
 
+export async function getDocumentImages(
+	spaceId: string,
+	docId: string,
+): Promise<DocumentImage[]> {
+	const resp = await fetch(
+		url(`/spaces/${spaceId}/documents/${docId}/images`),
+		{
+			...defaultOpts,
+			signal: timeoutSignal(),
+		},
+	);
+	return handle<DocumentImage[]>(resp);
+}
+
 // ── Tags ───────────────────────────────────────────────
 
-export async function listTags(): Promise<Tag[]> {
-	const resp = await fetch(url("/tags/"), {
+export async function listTags(spaceId: string): Promise<Tag[]> {
+	const resp = await fetch(url(`/spaces/${spaceId}/tags/`), {
 		...defaultOpts,
 		signal: timeoutSignal(),
 	});
 	return handle<Tag[]>(resp);
 }
 
-export async function createTag(data: TagCreateRequest): Promise<Tag> {
-	const resp = await fetch(url("/tags/"), {
+export async function createTag(spaceId: string, data: TagCreateRequest): Promise<Tag> {
+	const resp = await fetch(url(`/spaces/${spaceId}/tags/`), {
 		...defaultOpts,
 		method: "POST",
 		headers: { "Content-Type": "application/json" },

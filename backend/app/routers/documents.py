@@ -1,9 +1,11 @@
 """Document management router.
 
 Handles file uploads, document CRUD, tagging, and chunk viewing.
-PDFs are processed entirely in memory — no files are saved to disk.
+Documents and extracted images are uploaded to GCS for persistence.
+Supports PDF, DOCX, and PPTX file formats.
 """
 
+import asyncio
 import logging
 import uuid
 
@@ -16,6 +18,7 @@ from app.dependencies import DBSession
 from app.models import (
     Document,
     DocumentChunk,
+    DocumentImage,
     DocumentStatus,
     Space,
     Tag,
@@ -23,6 +26,7 @@ from app.models import (
 )
 from app.schemas.document import (
     DocumentChunkResponse,
+    DocumentImageResponse,
     DocumentListResponse,
     DocumentResponse,
     DocumentTagsUpdate,
@@ -35,15 +39,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/spaces/{space_id}/documents", tags=["documents"])
 
 
-async def _run_ingestion_pipeline(document_id: uuid.UUID, pdf_bytes: bytes) -> None:
-    """Background task: parse PDF from bytes, chunk, embed, update document status.
+async def _run_ingestion_pipeline(
+    document_id: uuid.UUID, file_bytes: bytes, original_filename: str
+) -> None:
+    """Background task: upload to GCS, parse, chunk, embed, store images.
 
     This runs outside the request lifecycle with its own DB session.
+    Supports PDF, DOCX, and PPTX formats via the unified document loader.
     """
     from app.database import async_session_factory
     from app.services.chunker import chunk_pages
-    from app.services.embeddings import embed_texts
-    from app.services.pdf_parser import parse_pdf
+    from app.services.document_loader import load_document
+    from app.services.embeddings import embed_images, embed_texts
+    from app.services.storage import upload_document, upload_image
 
     async with async_session_factory() as db:
         try:
@@ -52,31 +60,46 @@ async def _run_ingestion_pipeline(document_id: uuid.UUID, pdf_bytes: bytes) -> N
                 logger.error(f"Document {document_id} not found for ingestion")
                 return
 
-            # Step 1: Parse PDF from bytes (no disk I/O)
-            logger.info(f"Parsing PDF: {doc.original_filename}")
-            parsed = parse_pdf(pdf_bytes)
+            # Step 1: Upload original file to GCS (sync — run in thread pool)
+            logger.info(f"Uploading document to GCS: {doc.original_filename}")
+            gcs_uri = await asyncio.to_thread(
+                upload_document,
+                document_id=document_id,
+                filename=original_filename,
+                file_bytes=file_bytes,
+            )
+            doc.file_path = gcs_uri
+
+            # Step 2: Parse document from bytes (sync — run in thread pool)
+            logger.info(f"Parsing document: {doc.original_filename}")
+            parsed = await asyncio.to_thread(
+                load_document, original_filename, file_bytes
+            )
             doc.page_count = parsed.page_count
 
-            # Step 2: Chunk the parsed pages
-            logger.info(f"Chunking document into semantic chunks")
-            chunks = chunk_pages(
+            # Step 3: Chunk the parsed pages (sync — run in thread pool)
+            logger.info("Chunking document into semantic chunks")
+            chunks = await asyncio.to_thread(
+                chunk_pages,
                 parsed.pages,
-                chunk_size=settings.chunk_size,
-                chunk_overlap=settings.chunk_overlap,
+                settings.chunk_size,
+                settings.chunk_overlap,
             )
 
             if not chunks:
                 doc.status = DocumentStatus.FAILED
-                doc.error_message = "No text content could be extracted from the PDF."
+                doc.error_message = (
+                    "No text content could be extracted from the document."
+                )
                 await db.commit()
                 return
 
-            # Step 3: Embed all chunks
+            # Step 4: Embed all text chunks
             logger.info(f"Generating embeddings for {len(chunks)} chunks")
             chunk_texts = [c.content for c in chunks]
             embeddings = await embed_texts(chunk_texts)
 
-            # Step 4: Store chunks in DB
+            # Step 5: Store text chunks in DB
             for chunk, embedding in zip(chunks, embeddings):
                 db_chunk = DocumentChunk(
                     document_id=document_id,
@@ -91,10 +114,55 @@ async def _run_ingestion_pipeline(document_id: uuid.UUID, pdf_bytes: bytes) -> N
                 )
                 db.add(db_chunk)
 
+            # Step 6: Upload images to GCS + embed + store
+            if parsed.images:
+                logger.info(f"Processing {len(parsed.images)} images")
+
+                # Upload each image to GCS (sync — run in thread pool)
+                image_gcs_uris: list[str] = []
+                image_bytes_list: list[bytes] = []
+                for idx, img in enumerate(parsed.images):
+                    img_gcs_uri = await asyncio.to_thread(
+                        upload_image,
+                        document_id=document_id,
+                        image_index=idx,
+                        image_bytes=img.data,
+                        mime_type=img.mime_type,
+                    )
+                    image_gcs_uris.append(img_gcs_uri)
+                    image_bytes_list.append(img.data)
+
+                # Generate multimodal embeddings + captions for images
+                logger.info(
+                    f"Generating image embeddings for {len(image_bytes_list)} images"
+                )
+                image_embed_results = await embed_images(image_bytes_list)
+
+                # Store DocumentImage records
+                for idx, img in enumerate(parsed.images):
+                    emb_result = (
+                        image_embed_results[idx]
+                        if idx < len(image_embed_results)
+                        else None
+                    )
+                    db_image = DocumentImage(
+                        document_id=document_id,
+                        gcs_uri=image_gcs_uris[idx],
+                        page_number=img.page_number,
+                        image_index=idx,
+                        mime_type=img.mime_type,
+                        caption=emb_result.caption if emb_result else None,
+                        embedding=emb_result.embedding
+                        if emb_result and emb_result.embedding
+                        else None,
+                    )
+                    db.add(db_image)
+
             doc.status = DocumentStatus.READY
             await db.commit()
             logger.info(
-                f"Ingestion complete: {doc.original_filename} ({len(chunks)} chunks)"
+                f"Ingestion complete: {doc.original_filename} "
+                f"({len(chunks)} chunks, {len(parsed.images)} images)"
             )
 
         except Exception as e:
@@ -112,25 +180,38 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     space_id: uuid.UUID,
     file: UploadFile,
-    course_name: str | None = Query(None),
-    subject: str | None = Query(None),
 ):
-    """Upload a PDF document and start the ingestion pipeline.
+    """Upload a document and start the ingestion pipeline.
 
-    The document will be processed entirely in memory (no files saved to disk):
-    1. PDF text extraction
-    2. Semantic chunking
-    3. Embedding generation
-    4. Storage in vector database
+    Supports PDF, DOCX, and PPTX formats. The document will be:
+    1. Uploaded to GCS for persistent storage
+    2. Parsed for text + image extraction
+    3. Semantically chunked
+    4. Text + image embedding generation
+    5. Stored in vector database with GCS references
 
     Check the document's `status` field to track progress:
     - `processing`: Ingestion is in progress
     - `ready`: Document is fully indexed and searchable
     - `failed`: An error occurred (see `error_message`)
     """
+    from app.services.document_loader import SUPPORTED_EXTENSIONS
+
     # Validate file type
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required.")
+
+    from pathlib import PurePosixPath
+
+    file_ext = PurePosixPath(file.filename).suffix.lower()
+    if file_ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type: '{file_ext}'. "
+                f"Supported formats: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            ),
+        )
 
     if file.size and file.size > settings.max_upload_size_bytes:
         raise HTTPException(
@@ -139,22 +220,20 @@ async def upload_document(
         )
 
     # Read file into memory
-    pdf_bytes = await file.read()
-    file_size = len(pdf_bytes)
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
 
     # Validate space exists
     space = await db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
 
-    # Create document record (no file_path needed)
+    # Create document record (file_path set during ingestion after GCS upload)
     doc = Document(
-        filename=f"{uuid.uuid4()}.pdf",
+        filename=f"{uuid.uuid4()}{file_ext}",
         original_filename=file.filename,
-        file_path="",  # no disk storage
+        file_path="",  # will be updated with GCS URI during ingestion
         file_size_bytes=file_size,
-        course_name=course_name,
-        subject=subject,
         space_id=space_id,
         status=DocumentStatus.PROCESSING,
     )
@@ -162,7 +241,9 @@ async def upload_document(
     await db.commit()
 
     # Kick off background ingestion with in-memory bytes
-    background_tasks.add_task(_run_ingestion_pipeline, doc.id, pdf_bytes)
+    background_tasks.add_task(
+        _run_ingestion_pipeline, doc.id, file_bytes, file.filename
+    )
 
     # Return response with chunk_count=0 since processing hasn't started
     return DocumentResponse(
@@ -171,8 +252,6 @@ async def upload_document(
         original_filename=doc.original_filename,
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
-        course_name=doc.course_name,
-        subject=doc.subject,
         status=doc.status.value,
         error_message=doc.error_message,
         chunk_count=0,
@@ -186,8 +265,6 @@ async def upload_document(
 async def list_documents(
     db: DBSession,
     space_id: uuid.UUID,
-    course_name: str | None = Query(None),
-    subject: str | None = Query(None),
     status: str | None = Query(None),
     tag_id: uuid.UUID | None = Query(None),
     offset: int = Query(0, ge=0),
@@ -200,10 +277,6 @@ async def list_documents(
         .where(Document.space_id == space_id)
     )
 
-    if course_name:
-        query = query.where(Document.course_name.ilike(f"{course_name}%"))
-    if subject:
-        query = query.where(Document.subject.ilike(f"{subject}%"))
     if status:
         query = query.where(Document.status == status)
     if tag_id:
@@ -221,6 +294,7 @@ async def list_documents(
     # Get chunk counts
     doc_ids = [d.id for d in documents]
     chunk_counts: dict[uuid.UUID, int] = {}
+    image_counts: dict[uuid.UUID, int] = {}
     if doc_ids:
         chunk_count_query = (
             select(DocumentChunk.document_id, func.count(DocumentChunk.id))
@@ -229,6 +303,14 @@ async def list_documents(
         )
         chunk_result = await db.execute(chunk_count_query)
         chunk_counts = dict(chunk_result.all())
+
+        image_count_query = (
+            select(DocumentImage.document_id, func.count(DocumentImage.id))
+            .where(DocumentImage.document_id.in_(doc_ids))
+            .group_by(DocumentImage.document_id)
+        )
+        image_result = await db.execute(image_count_query)
+        image_counts = dict(image_result.all())
 
     doc_responses = []
     for doc in documents:
@@ -239,11 +321,10 @@ async def list_documents(
                 original_filename=doc.original_filename,
                 file_size_bytes=doc.file_size_bytes,
                 page_count=doc.page_count,
-                course_name=doc.course_name,
-                subject=doc.subject,
                 status=doc.status.value,
                 error_message=doc.error_message,
                 chunk_count=chunk_counts.get(doc.id, 0),
+                image_count=image_counts.get(doc.id, 0),
                 tags=[TagResponse.model_validate(t) for t in doc.tags],
                 created_at=doc.created_at,
                 updated_at=doc.updated_at,
@@ -274,17 +355,25 @@ async def get_document(db: DBSession, document_id: uuid.UUID):
         or 0
     )
 
+    image_count = (
+        await db.scalar(
+            select(func.count(DocumentImage.id)).where(
+                DocumentImage.document_id == document_id
+            )
+        )
+        or 0
+    )
+
     return DocumentResponse(
         id=doc.id,
         filename=doc.filename,
         original_filename=doc.original_filename,
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
-        course_name=doc.course_name,
-        subject=doc.subject,
         status=doc.status.value,
         error_message=doc.error_message,
         chunk_count=chunk_count,
+        image_count=image_count,
         tags=[TagResponse.model_validate(t) for t in doc.tags],
         created_at=doc.created_at,
         updated_at=doc.updated_at,
@@ -295,15 +384,10 @@ async def get_document(db: DBSession, document_id: uuid.UUID):
 async def update_document(
     db: DBSession, document_id: uuid.UUID, update: DocumentUpdate
 ):
-    """Update document metadata (course name, subject)."""
+    """Update document metadata."""
     doc = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    if update.course_name is not None:
-        doc.course_name = update.course_name
-    if update.subject is not None:
-        doc.subject = update.subject
 
     await db.flush()
 
@@ -324,17 +408,25 @@ async def update_document(
         or 0
     )
 
+    image_count = (
+        await db.scalar(
+            select(func.count(DocumentImage.id)).where(
+                DocumentImage.document_id == document_id
+            )
+        )
+        or 0
+    )
+
     return DocumentResponse(
         id=doc.id,
         filename=doc.filename,
         original_filename=doc.original_filename,
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
-        course_name=doc.course_name,
-        subject=doc.subject,
         status=doc.status.value,
         error_message=doc.error_message,
         chunk_count=chunk_count,
+        image_count=image_count,
         tags=[TagResponse.model_validate(t) for t in doc.tags],
         created_at=doc.created_at,
         updated_at=doc.updated_at,
@@ -343,10 +435,25 @@ async def update_document(
 
 @router.delete("/{document_id}", status_code=204)
 async def delete_document(db: DBSession, document_id: uuid.UUID):
-    """Delete a document and all its chunks and embeddings."""
+    """Delete a document, all its chunks/images, and associated GCS files."""
     doc = await db.get(Document, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # Clean up GCS files (original document + extracted images)
+    try:
+        from app.services.storage import delete_document_files
+
+        deleted_count = await asyncio.to_thread(delete_document_files, document_id)
+        logger.info(
+            "Deleted %d GCS objects for document %s", deleted_count, document_id
+        )
+    except Exception:
+        logger.warning(
+            "Failed to delete GCS files for document %s (proceeding with DB delete)",
+            document_id,
+            exc_info=True,
+        )
 
     await db.delete(doc)
 
@@ -354,6 +461,7 @@ async def delete_document(db: DBSession, document_id: uuid.UUID):
 @router.post("/{document_id}/tags", response_model=DocumentResponse)
 async def add_tags_to_document(
     db: DBSession,
+    space_id: uuid.UUID,
     document_id: uuid.UUID,
     body: DocumentTagsUpdate,
 ):
@@ -367,11 +475,16 @@ async def add_tags_to_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Fetch tags to add
+    # Fetch tags to add — validate each belongs to this space
     for tag_id in body.tag_ids:
         tag = await db.get(Tag, tag_id)
         if not tag:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
+        if tag.space_id != space_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tag {tag_id} does not belong to this space",
+            )
         if tag not in doc.tags:
             doc.tags.append(tag)
 
@@ -386,17 +499,25 @@ async def add_tags_to_document(
         or 0
     )
 
+    image_count = (
+        await db.scalar(
+            select(func.count(DocumentImage.id)).where(
+                DocumentImage.document_id == document_id
+            )
+        )
+        or 0
+    )
+
     return DocumentResponse(
         id=doc.id,
         filename=doc.filename,
         original_filename=doc.original_filename,
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
-        course_name=doc.course_name,
-        subject=doc.subject,
         status=doc.status.value,
         error_message=doc.error_message,
         chunk_count=chunk_count,
+        image_count=image_count,
         tags=[TagResponse.model_validate(t) for t in doc.tags],
         created_at=doc.created_at,
         updated_at=doc.updated_at,
@@ -434,17 +555,25 @@ async def remove_tag_from_document(
         or 0
     )
 
+    image_count = (
+        await db.scalar(
+            select(func.count(DocumentImage.id)).where(
+                DocumentImage.document_id == document_id
+            )
+        )
+        or 0
+    )
+
     return DocumentResponse(
         id=doc.id,
         filename=doc.filename,
         original_filename=doc.original_filename,
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
-        course_name=doc.course_name,
-        subject=doc.subject,
         status=doc.status.value,
         error_message=doc.error_message,
         chunk_count=chunk_count,
+        image_count=image_count,
         tags=[TagResponse.model_validate(t) for t in doc.tags],
         created_at=doc.created_at,
         updated_at=doc.updated_at,
@@ -473,3 +602,36 @@ async def get_document_chunks(
     chunks = result.scalars().all()
 
     return [DocumentChunkResponse.model_validate(c) for c in chunks]
+
+
+@router.get("/{document_id}/images", response_model=list[DocumentImageResponse])
+async def get_document_images(
+    db: DBSession,
+    document_id: uuid.UUID,
+):
+    """List all extracted images for a document."""
+    doc = await db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    result = await db.execute(
+        select(DocumentImage)
+        .where(DocumentImage.document_id == document_id)
+        .order_by(DocumentImage.image_index)
+    )
+    images = result.scalars().all()
+
+    from app.services.storage import get_public_url
+
+    return [
+        DocumentImageResponse(
+            id=img.id,
+            gcs_url=get_public_url(img.gcs_uri),
+            page_number=img.page_number,
+            image_index=img.image_index,
+            mime_type=img.mime_type,
+            caption=img.caption,
+            created_at=img.created_at,
+        )
+        for img in images
+    ]

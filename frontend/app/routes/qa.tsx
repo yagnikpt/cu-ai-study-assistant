@@ -2,13 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpen,
 	ChevronDown,
+	ImageIcon,
 	Loader2,
 	Send,
 	Settings2,
 	Square,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import { useParams } from "react-router";
 import { Badge } from "~/components/ui/badge";
@@ -23,7 +24,11 @@ import { Label } from "~/components/ui/label";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Separator } from "~/components/ui/separator";
 import { askQuestionStream, listDocuments } from "~/lib/api";
-import type { QAStreamEvent, SourceReference } from "~/lib/types";
+import type {
+	ImageReference,
+	QAStreamEvent,
+	SourceReference,
+} from "~/lib/types";
 import { cn } from "~/lib/utils";
 
 // ── Types ──────────────────────────────────────────────
@@ -33,6 +38,7 @@ interface Message {
 	role: "user" | "assistant";
 	content: string;
 	sources?: SourceReference[];
+	images?: ImageReference[];
 	model?: string;
 	isStreaming?: boolean;
 }
@@ -102,6 +108,13 @@ export default function QAPage() {
 								setMessages((prev) =>
 									prev.map((m) =>
 										m.id === assistantId ? { ...m, sources: event.data } : m,
+									),
+								);
+								break;
+							case "images":
+								setMessages((prev) =>
+									prev.map((m) =>
+										m.id === assistantId ? { ...m, images: event.data } : m,
 									),
 								);
 								break;
@@ -363,11 +376,131 @@ function SettingsBar({
 	);
 }
 
+// ── Image placeholder utilities ───────────────────────
+
+/**
+ * Regex to match AI-generated image placeholders in markdown content.
+ * Format: [Image: caption | id=<uuid>]
+ */
+const IMAGE_PLACEHOLDER_RE = /\[Image:\s*(.+?)\s*\|\s*id=([0-9a-f-]{36})\]/gi;
+
+/**
+ * Build a map of image_id -> image_url from the images array.
+ */
+function buildImageMap(
+	images: ImageReference[] | undefined,
+): Map<string, string> {
+	const map = new Map<string, string>();
+	if (!images) return map;
+	for (const img of images) {
+		map.set(img.image_id, img.image_url);
+	}
+	return map;
+}
+
+/**
+ * Replace [Image: caption | id=<uuid>] placeholders with standard markdown
+ * images: ![caption](url)
+ *
+ * If the image_id is not found in the map, the placeholder is left as-is
+ * (rendered as plain text).
+ */
+function resolveImagePlaceholders(
+	content: string,
+	imageMap: Map<string, string>,
+): string {
+	if (imageMap.size === 0) return content;
+	return content.replace(IMAGE_PLACEHOLDER_RE, (_match, caption, id) => {
+		const url = imageMap.get(id);
+		if (!url) return _match; // leave unknown references as plain text
+		return `\n\n![${caption}](${url})\n\n`;
+	});
+}
+
+// ── Source placeholder utilities ──────────────────────
+
+/**
+ * Regex to match AI-generated source placeholders in markdown content.
+ * Format: [Source: display text | chunk_id=<uuid>]
+ */
+const SOURCE_PLACEHOLDER_RE =
+	/\[Source:\s*(.+?)\s*\|\s*chunk_id=([0-9a-f-]{36})\]/gi;
+
+/**
+ * Build a set of known source chunk_ids for quick lookup.
+ */
+function buildSourceIdSet(
+	sources: SourceReference[] | undefined,
+): Set<string> {
+	const set = new Set<string>();
+	if (!sources) return set;
+	for (const src of sources) {
+		set.add(src.chunk_id);
+	}
+	return set;
+}
+
+/**
+ * Replace [Source: display | chunk_id=<uuid>] placeholders with markdown
+ * links that the custom `a` component will render as clickable badges.
+ *
+ * Output: [display](#source-<uuid>)
+ *
+ * If the chunk_id is not in the known sources set, the placeholder is left
+ * as-is (rendered as plain text).
+ */
+function resolveSourcePlaceholders(
+	content: string,
+	sourceIds: Set<string>,
+): string {
+	if (sourceIds.size === 0) return content;
+	return content.replace(SOURCE_PLACEHOLDER_RE, (_match, display, id) => {
+		if (!sourceIds.has(id)) return _match;
+		return `[${display}](#source-${id})`;
+	});
+}
+
 // ── Chat Bubble ────────────────────────────────────────
 
 function ChatBubble({ message }: { message: Message }) {
 	const [showSources, setShowSources] = useState(false);
+	const [showImages, setShowImages] = useState(false);
+	const [highlightedSourceId, setHighlightedSourceId] = useState<
+		string | null
+	>(null);
 	const isUser = message.role === "user";
+
+	// Build image lookup map and resolve placeholders in content
+	const imageMap = useMemo(
+		() => buildImageMap(message.images),
+		[message.images],
+	);
+	const sourceIds = useMemo(
+		() => buildSourceIdSet(message.sources),
+		[message.sources],
+	);
+	const resolvedContent = useMemo(() => {
+		if (!message.content) return "";
+		let text = resolveImagePlaceholders(message.content, imageMap);
+		text = resolveSourcePlaceholders(text, sourceIds);
+		return text;
+	}, [message.content, imageMap, sourceIds]);
+
+	/** Handle click on a source citation badge: expand sources + scroll */
+	const handleSourceBadgeClick = useCallback(
+		(chunkId: string) => {
+			setShowSources(true);
+			setHighlightedSourceId(chunkId);
+			// Wait a tick for the collapsible to expand, then scroll
+			requestAnimationFrame(() => {
+				const el = document.getElementById(`source-${chunkId}`);
+				el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+			});
+			// Clear highlight after animation
+			setTimeout(() => setHighlightedSourceId(null), 2000);
+		},
+		[],
+	);
 
 	return (
 		<div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
@@ -381,8 +514,55 @@ function ChatBubble({ message }: { message: Message }) {
 					<p className="whitespace-pre-wrap text-sm">{message.content}</p>
 				) : (
 					<div className="prose prose-sm max-w-none dark:prose-invert">
-						{message.content ? (
-							<Markdown>{message.content}</Markdown>
+						{resolvedContent ? (
+							<Markdown
+								components={{
+									img: ({ src, alt }) => (
+										<figure className="my-3">
+											<a
+												href={src}
+												target="_blank"
+												rel="noopener noreferrer"
+												className="block overflow-hidden rounded-lg border no-underline"
+											>
+												<img
+													src={src}
+													alt={alt || ""}
+													className="my-0! w-full max-h-80 object-contain bg-muted/40"
+													loading="lazy"
+												/>
+											</a>
+											{alt && (
+												<figcaption className="mt-1.5 text-center text-xs text-muted-foreground">
+													{alt}
+												</figcaption>
+											)}
+										</figure>
+									),
+									a: ({ href, children }) => {
+										if (href?.startsWith("#source-")) {
+											const chunkId = href.replace("#source-", "");
+											return (
+												<button
+													type="button"
+													onClick={() => handleSourceBadgeClick(chunkId)}
+													className="no-underline! inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer align-baseline mx-0.5"
+												>
+													<BookOpen className="mr-1 size-3" />
+													{children}
+												</button>
+											);
+										}
+										return (
+											<a href={href} target="_blank" rel="noopener noreferrer">
+												{children}
+											</a>
+										);
+									},
+								}}
+							>
+								{resolvedContent}
+							</Markdown>
 						) : message.isStreaming ? (
 							<div className="flex items-center gap-2">
 								<Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -413,8 +593,60 @@ function ChatBubble({ message }: { message: Message }) {
 
 						{showSources && (
 							<div className="mt-2 space-y-2">
-								{message.sources.map((src) => (
-									<SourceCard key={src.chunk_id} source={src} />
+							{message.sources.map((src) => (
+									<SourceCard
+										key={src.chunk_id}
+										source={src}
+										highlighted={highlightedSourceId === src.chunk_id}
+									/>
+								))}
+							</div>
+						)}
+					</>
+				)}
+
+				{!isUser && message.images && message.images.length > 0 && (
+					<>
+						<Separator className="my-2" />
+						<button
+							type="button"
+							onClick={() => setShowImages((v) => !v)}
+							className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+						>
+							<ImageIcon className="size-3" />
+							<ChevronDown
+								className={cn(
+									"size-3 transition-transform",
+									showImages && "rotate-180",
+								)}
+							/>
+							{showImages ? "Hide" : "Show"} relevant figures (
+							{message.images.length})
+						</button>
+
+						{showImages && (
+							<div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+								{message.images.map((img) => (
+									<a
+										key={img.image_url}
+										href={img.image_url}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="group overflow-hidden rounded-lg border"
+									>
+										<img
+											src={img.image_url}
+											alt={`Figure from ${img.document_name}${img.page_number != null ? `, p.${img.page_number}` : ""}`}
+											className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
+											loading="lazy"
+										/>
+										<div className="px-2 py-1">
+											<p className="truncate text-[10px] text-muted-foreground">
+												{img.document_name}
+												{img.page_number != null && ` p.${img.page_number}`}
+											</p>
+										</div>
+									</a>
 								))}
 							</div>
 						)}
@@ -433,14 +665,23 @@ function ChatBubble({ message }: { message: Message }) {
 
 // ── Source Card ─────────────────────────────────────────
 
-function SourceCard({ source }: { source: SourceReference }) {
+function SourceCard({
+	source,
+	highlighted,
+}: { source: SourceReference; highlighted?: boolean }) {
 	const pages =
 		source.page_start === source.page_end
 			? `p.${source.page_start}`
 			: `p.${source.page_start}-${source.page_end}`;
 
 	return (
-		<div className="rounded-lg bg-muted p-2">
+		<div
+			id={`source-${source.chunk_id}`}
+			className={cn(
+				"rounded-lg bg-muted p-2 transition-colors duration-500",
+				highlighted && "ring-2 ring-primary bg-primary/10",
+			)}
+		>
 			<div className="flex items-baseline justify-between gap-2">
 				<span className="text-xs font-medium">
 					{source.document_name}

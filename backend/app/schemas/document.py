@@ -18,6 +18,7 @@ class TagResponse(BaseModel):
     id: uuid.UUID
     name: str
     color: str | None
+    space_id: uuid.UUID
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -29,14 +30,11 @@ class TagResponse(BaseModel):
 class DocumentUploadMeta(BaseModel):
     """Optional metadata sent alongside file upload."""
 
-    course_name: str | None = Field(None, max_length=255)
-    subject: str | None = Field(None, max_length=255)
     tag_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class DocumentUpdate(BaseModel):
-    course_name: str | None = None
-    subject: str | None = None
+    pass
 
 
 class DocumentChunkResponse(BaseModel):
@@ -51,17 +49,28 @@ class DocumentChunkResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DocumentImageResponse(BaseModel):
+    id: uuid.UUID
+    gcs_url: str
+    page_number: int | None
+    image_index: int
+    mime_type: str
+    caption: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class DocumentResponse(BaseModel):
     id: uuid.UUID
     filename: str
     original_filename: str
     file_size_bytes: int
     page_count: int
-    course_name: str | None
-    subject: str | None
     status: str
     error_message: str | None
     chunk_count: int = 0
+    image_count: int = 0
     tags: list[TagResponse] = []
     created_at: datetime
     updated_at: datetime

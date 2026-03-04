@@ -23,6 +23,7 @@ from app.models import (
     QuestionType,
 )
 from app.services.embeddings import embed_query
+from app.services.genai_client import get_genai_client
 from app.services.vector_search import search_similar_chunks
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,7 @@ SOURCE MATERIAL:
 Generate the questions as JSON."""
 
     # Generate with Gemini
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = get_genai_client()
     response = client.models.generate_content(
         model=settings.generation_model,
         contents=user_prompt,

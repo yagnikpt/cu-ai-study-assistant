@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.genai_client import get_genai_client
 from app.models import (
     Document,
     DocumentChunk,
@@ -118,7 +119,7 @@ async def generate_study_plan(
     context = "\n\n---\n\n".join(context_parts)
 
     # Step 2: Call Gemini
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = get_genai_client()
     response = await client.aio.models.generate_content(
         model=settings.generation_model,
         contents=PLAN_PROMPT + context,

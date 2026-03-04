@@ -31,7 +31,7 @@ export default function LoginPage() {
 			</Card>
 
 			<p className="mt-6 text-xs text-muted-foreground">
-				Powered by Gemini AI &bull; Your data stays in your spaces
+				Powered by AI &bull; Your data stays in your spaces.
 			</p>
 		</div>
 	);

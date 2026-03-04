@@ -12,8 +12,9 @@ from collections.abc import AsyncGenerator
 from google import genai
 
 from app.config import settings
-from app.services.embeddings import embed_query
-from app.services.vector_search import search_similar_chunks
+from app.services.genai_client import get_genai_client
+from app.services.embeddings import embed_query, embed_query_multimodal
+from app.services.vector_search import search_similar_chunks, search_similar_images
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,10 +25,11 @@ SYSTEM_PROMPT = """You are an AI study assistant that helps students understand 
 IMPORTANT RULES:
 1. ONLY answer based on the provided source material below. Do NOT use external knowledge.
 2. If the source material does not contain enough information to answer the question, say so explicitly.
-3. Always cite your sources using the format [Source: document_name, p.X] or [Source: document_name, pp.X-Y].
-4. Be clear, educational, and well-structured in your explanations.;
+3. Cite sources sparingly — only when introducing a key fact, definition, or claim that a student might want to verify. Use the exact format from the AVAILABLE SOURCES list: [Source: document_name, p.X | chunk_id=<uuid>]. Place citations at the end of the relevant sentence or paragraph, NOT after every line. A few well-placed citations are better than citing every sentence. Never invent source references.
+4. Be clear, educational, and well-structured in your explanations.
 5. Use markdown formatting for readability.
 6. Break down complex concepts into simpler parts when helpful.
+7. When AVAILABLE IMAGES are provided and an image is relevant to your explanation, insert it inline using exactly this format: [Image: caption | id=<uuid>]. Place it where it would be most helpful for understanding. Only reference images from the AVAILABLE IMAGES list — never invent image references. You may reference zero, one, or multiple images depending on relevance.
 
 Output format: Markdown with proper headers (##, ###), bullet points.
 """
@@ -77,13 +79,73 @@ def _build_source_dicts(chunks: list[dict]) -> list[dict]:
     return sources
 
 
+def _build_image_dicts(images: list[dict]) -> list[dict]:
+    """Build image reference dicts from retrieved images."""
+    return [
+        {
+            "image_id": img["image_id"],
+            "image_url": img["image_url"],
+            "document_id": str(img["document_id"]),
+            "document_name": img["document_name"],
+            "page_number": img.get("page_number"),
+            "caption": img.get("caption"),
+            "relevance_score": img["score"],
+        }
+        for img in images
+    ]
+
+
+def _build_image_context(images: list[dict]) -> str:
+    """Build the AVAILABLE IMAGES section of the prompt from retrieved images."""
+    if not images:
+        return ""
+
+    parts = ["\nAVAILABLE IMAGES:"]
+    for img in images:
+        caption = img.get("caption") or "Untitled image"
+        page = f", p.{img['page_number']}" if img.get("page_number") else ""
+        parts.append(
+            f"- [Image: {caption} | id={img['image_id']}] "
+            f"(from {img['document_name']}{page})"
+        )
+    return "\n".join(parts)
+
+
+def _build_source_context(chunks: list[dict]) -> str:
+    """Build the AVAILABLE SOURCES section of the prompt from retrieved chunks."""
+    if not chunks:
+        return ""
+
+    parts = ["\nAVAILABLE SOURCES:"]
+    for chunk in chunks:
+        pages = (
+            f"p.{chunk['page_start']}"
+            if chunk["page_start"] == chunk["page_end"]
+            else f"pp.{chunk['page_start']}-{chunk['page_end']}"
+        )
+        section = (
+            f" Section: {chunk['section_title']}" if chunk.get("section_title") else ""
+        )
+        parts.append(
+            f"- [Source: {chunk['document_name']}, {pages} | chunk_id={chunk['chunk_id']}]"
+            f"{section}"
+        )
+    return "\n".join(parts)
+
+
 async def _retrieve_and_build_prompt(
     db: AsyncSession,
     question: str,
     document_ids: list[uuid.UUID] | None = None,
     top_k: int = 5,
-) -> tuple[list[dict], str]:
-    """Shared retrieval + prompt construction for both streaming and non-streaming."""
+) -> tuple[list[dict], list[dict], str]:
+    """Shared retrieval + prompt construction for both streaming and non-streaming.
+
+    Returns:
+        Tuple of (text chunks, image results, user prompt string).
+    """
+    # Run text and image embedding in parallel conceptually
+    # (both are fast network calls)
     query_embedding = await embed_query(question)
     chunks = await search_similar_chunks(
         db=db,
@@ -91,17 +153,35 @@ async def _retrieve_and_build_prompt(
         top_k=top_k,
         document_ids=document_ids,
     )
+
+    # Search for relevant images (top 3, in the multimodal embedding space)
+    image_results: list[dict] = []
+    try:
+        mm_embedding = await embed_query_multimodal(question)
+        image_results = await search_similar_images(
+            db=db,
+            query_embedding=mm_embedding,
+            top_k=3,
+            document_ids=document_ids,
+        )
+    except Exception:
+        logger.warning("Image search failed, continuing without images", exc_info=True)
+
     context = _build_context_prompt(chunks)
+    image_context = _build_image_context(image_results)
+    source_context = _build_source_context(chunks)
     user_prompt = f"""Based on the following source material, answer the student's question.
 
 SOURCE MATERIAL:
 {context}
+{image_context}
+{source_context}
 
 STUDENT'S QUESTION:
 {question}
 
-Provide a clear, well-structured answer with source citations."""
-    return chunks, user_prompt
+Provide a clear, well-structured answer. Embed relevant images inline using the [Image: caption | id=<uuid>] format where helpful."""
+    return chunks, image_results, user_prompt
 
 
 async def ask_question(
@@ -121,11 +201,11 @@ async def ask_question(
     Returns:
         Dict with 'answer', 'sources', and 'model'.
     """
-    chunks, user_prompt = await _retrieve_and_build_prompt(
+    chunks, image_results, user_prompt = await _retrieve_and_build_prompt(
         db, question, document_ids, top_k
     )
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = get_genai_client()
     response = client.models.generate_content(
         model=settings.generation_model,
         contents=user_prompt,
@@ -142,11 +222,15 @@ async def ask_question(
     )
 
     sources = _build_source_dicts(chunks)
-    logger.info(f"Q&A: answered question with {len(sources)} sources")
+    images = _build_image_dicts(image_results)
+    logger.info(
+        f"Q&A: answered question with {len(sources)} sources and {len(images)} images"
+    )
 
     return {
         "answer": answer,
         "sources": sources,
+        "images": images,
         "model": settings.generation_model,
     }
 
@@ -161,10 +245,11 @@ async def ask_question_stream(
 
     Yields SSE-formatted strings:
       event: sources\ndata: <json>\n\n   (sent first)
+      event: images\ndata: <json>\n\n    (sent after sources)
       event: token\ndata: <json>\n\n     (for each text chunk)
       event: done\ndata: <json>\n\n      (sent last)
     """
-    chunks, user_prompt = await _retrieve_and_build_prompt(
+    chunks, image_results, user_prompt = await _retrieve_and_build_prompt(
         db, question, document_ids, top_k
     )
 
@@ -172,8 +257,13 @@ async def ask_question_stream(
     sources = _build_source_dicts(chunks)
     yield f"event: sources\ndata: {json.dumps(sources)}\n\n"
 
+    # Emit relevant images
+    images = _build_image_dicts(image_results)
+    if images:
+        yield f"event: images\ndata: {json.dumps(images)}\n\n"
+
     # Stream generation
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = get_genai_client()
     stream = await client.aio.models.generate_content_stream(
         model=settings.generation_model,
         contents=user_prompt,
@@ -190,4 +280,6 @@ async def ask_question_stream(
             yield f"event: token\ndata: {json.dumps(text)}\n\n"
 
     yield f"event: done\ndata: {json.dumps({'model': settings.generation_model})}\n\n"
-    logger.info(f"Q&A: streamed answer with {len(sources)} sources")
+    logger.info(
+        f"Q&A: streamed answer with {len(sources)} sources and {len(images)} images"
+    )

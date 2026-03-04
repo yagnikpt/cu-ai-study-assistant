@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from app.services.pdf_parser import PageContent
+from app.services.document_loader import PageContent
 
 logger = logging.getLogger(__name__)
 

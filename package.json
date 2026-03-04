@@ -1,0 +1,13 @@
+{
+    "name": "ai-study-assistant",
+    "private": true,
+    "scripts": {
+        "dev": "bun run --filter frontend dev",
+        "typecheck": "bun run --filter frontend typecheck",
+        "build": "bun run --filter frontend build",
+        "start": "bun run --filter frontend start"
+    },
+    "workspaces": [
+        "frontend"
+    ]
+}

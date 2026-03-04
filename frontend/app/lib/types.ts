@@ -44,6 +44,7 @@ export interface Tag {
 	id: string;
 	name: string;
 	color: string | null;
+	space_id: string;
 	created_at: ISODateString;
 }
 
@@ -70,17 +71,26 @@ export interface DocumentChunk {
 	token_count: number;
 }
 
+export interface DocumentImage {
+	id: string;
+	gcs_url: string;
+	page_number: number | null;
+	image_index: number;
+	mime_type: string;
+	caption: string | null;
+	created_at: ISODateString;
+}
+
 export interface Document {
 	id: string;
 	filename: string;
 	original_filename: string;
 	file_size_bytes: number;
 	page_count: number;
-	course_name: string | null;
-	subject: string | null;
 	status: DocumentStatus;
 	error_message: string | null;
 	chunk_count: number;
+	image_count: number;
 	tags: Tag[];
 	created_at: ISODateString;
 	updated_at: ISODateString;
@@ -92,8 +102,6 @@ export interface DocumentListResponse {
 }
 
 export interface DocumentListParams {
-	course_name?: string;
-	subject?: string;
 	status?: DocumentStatus;
 	offset?: number;
 	limit?: number;
@@ -110,6 +118,16 @@ export interface SourceReference {
 	section_title: string | null;
 	relevance_score: number;
 	text_preview: string;
+}
+
+export interface ImageReference {
+	image_id: string;
+	image_url: string;
+	document_id: string;
+	document_name: string;
+	page_number: number | null;
+	caption: string | null;
+	relevance_score: number;
 }
 
 export interface AskRequest {
@@ -162,12 +180,14 @@ export interface SummarySource {
 	document_name: string;
 	pages: string;
 	chunk_id: string;
+	document_id: string;
 }
 
 export interface SummaryResponse {
 	summary: string;
 	topic: string;
 	sources: SummarySource[];
+	images: ImageReference[];
 	model: string;
 }
 
@@ -177,6 +197,12 @@ export interface SummaryResponse {
 export interface QASourcesEvent {
 	type: "sources";
 	data: SourceReference[];
+}
+
+/** Second event (optional) — array of relevant images */
+export interface QAImagesEvent {
+	type: "images";
+	data: ImageReference[];
 }
 
 /** Repeated — each text fragment */
@@ -191,7 +217,11 @@ export interface QADoneEvent {
 	data: { model: string };
 }
 
-export type QAStreamEvent = QASourcesEvent | QATokenEvent | QADoneEvent;
+export type QAStreamEvent =
+	| QASourcesEvent
+	| QAImagesEvent
+	| QATokenEvent
+	| QADoneEvent;
 
 // ── Summary SSE Events ────────────────────────────────
 
@@ -199,6 +229,12 @@ export type QAStreamEvent = QASourcesEvent | QATokenEvent | QADoneEvent;
 export interface SummaryMetaEvent {
 	type: "meta";
 	data: { topic: string; sources: SummarySource[] };
+}
+
+/** Second event (optional) — array of relevant images */
+export interface SummaryImagesEvent {
+	type: "images";
+	data: ImageReference[];
 }
 
 /** Repeated — each text fragment */
@@ -215,6 +251,7 @@ export interface SummaryDoneEvent {
 
 export type SummaryStreamEvent =
 	| SummaryMetaEvent
+	| SummaryImagesEvent
 	| SummaryTokenEvent
 	| SummaryDoneEvent;
 

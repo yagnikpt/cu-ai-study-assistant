@@ -5,6 +5,7 @@ import {
 	CircleCheck,
 	Eye,
 	FileStack,
+	ImageIcon,
 	Loader2,
 	SlidersHorizontal,
 	Tags,
@@ -58,6 +59,7 @@ import {
 	createTag,
 	deleteDocument,
 	getChunks,
+	getDocumentImages,
 	listDocuments,
 	listTags,
 	uploadDocument,
@@ -65,6 +67,7 @@ import {
 import type {
 	Document,
 	DocumentChunk,
+	DocumentImage,
 	DocumentListParams,
 	DocumentStatus,
 } from "~/lib/types";
@@ -87,7 +90,7 @@ export default function DocumentsPage() {
 
 			<UploadSection spaceId={spaceId} />
 			<DocumentList spaceId={spaceId} />
-			<TagSection />
+			<TagSection spaceId={spaceId} />
 		</div>
 	);
 }
@@ -104,27 +107,35 @@ function PageSkeleton() {
 	);
 }
 
+// Supported document MIME types for upload
+const SUPPORTED_MIME_TYPES = new Set([
+	"application/pdf",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+
+// Supported file extensions (lowercase)
+const SUPPORTED_EXTENSIONS = new Set([".pdf", ".docx", ".pptx"]);
+
+function hasValidExtension(filename: string): boolean {
+	const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+	return SUPPORTED_EXTENSIONS.has(ext);
+}
+
 // ── Upload Section ─────────────────────────────────────
 
 function UploadSection({ spaceId }: { spaceId: string }) {
 	const queryClient = useQueryClient();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [file, setFile] = useState<File | null>(null);
-	const [courseName, setCourseName] = useState("");
-	const [subject, setSubject] = useState("");
 	const [dragOver, setDragOver] = useState(false);
 
 	const uploadMut = useMutation({
 		mutationFn: (f: File) =>
-			uploadDocument(spaceId, f, {
-				course_name: courseName || undefined,
-				subject: subject || undefined,
-			}),
+			uploadDocument(spaceId, f),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["documents"] });
 			setFile(null);
-			setCourseName("");
-			setSubject("");
 			if (fileInputRef.current) fileInputRef.current.value = "";
 		},
 	});
@@ -143,7 +154,10 @@ function UploadSection({ spaceId }: { spaceId: string }) {
 		e.preventDefault();
 		setDragOver(false);
 		const dropped = e.dataTransfer.files[0];
-		if (dropped?.type === "application/pdf") {
+		if (
+			dropped &&
+			(SUPPORTED_MIME_TYPES.has(dropped.type) || hasValidExtension(dropped.name))
+		) {
 			setFile(dropped);
 		}
 	}, []);
@@ -161,9 +175,9 @@ function UploadSection({ spaceId }: { spaceId: string }) {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Upload a PDF</CardTitle>
+				<CardTitle>Upload a Document</CardTitle>
 				<CardDescription>
-					Add a new document to your study library.
+					Add a PDF, DOCX, or PPTX file to your study library.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -195,10 +209,10 @@ function UploadSection({ spaceId }: { spaceId: string }) {
 						) : (
 							<>
 								<p className="text-sm font-medium">
-									Drop a PDF here or click to browse
+									Drop a file here or click to browse
 								</p>
 								<p className="mt-1 text-xs text-muted-foreground">
-									PDF files only
+									PDF, DOCX, PPTX files
 								</p>
 							</>
 						)}
@@ -206,32 +220,10 @@ function UploadSection({ spaceId }: { spaceId: string }) {
 					<input
 						ref={fileInputRef}
 						type="file"
-						accept=".pdf,application/pdf"
+						accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation"
 						onChange={handleFileChange}
 						className="hidden"
 					/>
-
-					{/* Metadata fields */}
-					<div className="grid md:grid-cols-2 gap-4">
-						<div className="space-y-2">
-							<Label htmlFor="course-name">Course name (optional)</Label>
-							<Input
-								id="course-name"
-								placeholder="e.g. CS 101"
-								value={courseName}
-								onChange={(e) => setCourseName(e.target.value)}
-							/>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="subject">Subject (optional)</Label>
-							<Input
-								id="subject"
-								placeholder="e.g. Data Structures"
-								value={subject}
-								onChange={(e) => setSubject(e.target.value)}
-							/>
-						</div>
-					</div>
 
 					{/* Error display */}
 					{uploadMut.isError && (
@@ -315,7 +307,7 @@ function DocumentList({ spaceId }: { spaceId: string }) {
 						<FileStack className="mb-3 size-10 text-muted-foreground" />
 						<p className="font-medium">No documents yet</p>
 						<p className="text-sm text-muted-foreground">
-							Upload a PDF above to get started.
+							Upload a document above to get started.
 						</p>
 					</div>
 				) : (
@@ -340,21 +332,7 @@ function FilterBar({
 	onChange: (f: DocumentListParams) => void;
 }) {
 	return (
-		<div className="mb-4 grid grid-cols-3 gap-3 rounded-lg border bg-muted/50 p-3">
-			<Input
-				placeholder="Course name"
-				value={filters.course_name ?? ""}
-				onChange={(e) =>
-					onChange({ ...filters, course_name: e.target.value || undefined })
-				}
-			/>
-			<Input
-				placeholder="Subject"
-				value={filters.subject ?? ""}
-				onChange={(e) =>
-					onChange({ ...filters, subject: e.target.value || undefined })
-				}
-			/>
+		<div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border bg-muted/50 p-3">
 			<Select
 				value={filters.status ?? "all"}
 				onValueChange={(v) =>
@@ -412,6 +390,7 @@ function StatusIcon({ status }: { status: DocumentStatus }) {
 function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 	const queryClient = useQueryClient();
 	const [showChunks, setShowChunks] = useState(false);
+	const [showImages, setShowImages] = useState(false);
 	const [showTagModal, setShowTagModal] = useState(false);
 
 	const deleteMut = useMutation({
@@ -470,7 +449,7 @@ function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 					<Separator />
 					<div className="px-4 py-4">
 						{/* Metrics row */}
-						<div className="grid grid-cols-3 gap-3">
+						<div className="grid grid-cols-4 gap-3">
 							<div className="rounded-lg border bg-muted/50 p-3 text-center">
 								<p className="md:text-2xl font-bold tabular-nums">
 									{doc.page_count}
@@ -484,19 +463,23 @@ function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 								<p className="text-xs text-muted-foreground">Chunks</p>
 							</div>
 							<div className="rounded-lg border bg-muted/50 p-3 text-center">
+								<p className="md:text-2xl font-bold tabular-nums">
+									{doc.image_count}
+								</p>
+								<p className="text-xs text-muted-foreground">Images</p>
+							</div>
+							<div className="rounded-lg border bg-muted/50 p-3 text-center">
 								<p className="md:text-2xl font-bold tabular-nums">{sizeKB}</p>
 								<p className="text-xs text-muted-foreground">KB</p>
 							</div>
 						</div>
 
 						{/* Metadata */}
-						<div className="mt-3 space-y-1 text-sm text-muted-foreground">
-							{doc.course_name && <p>Course: {doc.course_name}</p>}
-							{doc.subject && <p>Subject: {doc.subject}</p>}
-							{doc.error_message && (
-								<p className="text-destructive">Error: {doc.error_message}</p>
-							)}
-						</div>
+						{doc.error_message && (
+							<p className="mt-3 text-sm text-destructive">
+								Error: {doc.error_message}
+							</p>
+						)}
 
 						{/* Tags on mobile */}
 						{doc.tags.length > 0 && (
@@ -529,6 +512,17 @@ function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 								<Eye />
 								View chunks
 							</Button>
+							{doc.image_count > 0 && (
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setShowImages(true)}
+									disabled={doc.status !== "ready"}
+								>
+									<ImageIcon />
+									View images
+								</Button>
+							)}
 							<Button
 								variant="outline"
 								size="sm"
@@ -566,6 +560,11 @@ function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 			{/* Chunks dialog */}
 			{showChunks && (
 				<ChunkViewer spaceId={spaceId} docId={doc.id} onClose={() => setShowChunks(false)} />
+			)}
+
+			{/* Image gallery dialog */}
+			{showImages && (
+				<ImageGallery spaceId={spaceId} docId={doc.id} onClose={() => setShowImages(false)} />
 			)}
 
 			{/* Tag management dialog */}
@@ -653,6 +652,89 @@ function ChunkCard({ chunk }: { chunk: DocumentChunk }) {
 	);
 }
 
+// ── Image Gallery Dialog ───────────────────────────────
+
+function ImageGallery({
+	spaceId,
+	docId,
+	onClose,
+}: {
+	spaceId: string;
+	docId: string;
+	onClose: () => void;
+}) {
+	const { data: images, isLoading } = useQuery({
+		queryKey: ["images", docId],
+		queryFn: () => getDocumentImages(spaceId, docId),
+	});
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent className="sm:max-w-3xl">
+				<DialogHeader>
+					<DialogTitle>Document Images</DialogTitle>
+					<DialogDescription>
+						Images extracted from this document ({images?.length ?? 0} total).
+					</DialogDescription>
+				</DialogHeader>
+
+				{isLoading ? (
+					<PageSkeleton />
+				) : !images || images.length === 0 ? (
+					<p className="py-4 text-sm text-muted-foreground">
+						No images found in this document.
+					</p>
+				) : (
+					<ScrollArea className="max-h-[60vh]">
+						<div className="grid grid-cols-2 gap-4 pr-4 sm:grid-cols-3">
+							{images.map((img) => (
+								<ImageCard key={img.id} image={img} />
+							))}
+						</div>
+					</ScrollArea>
+				)}
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function ImageCard({ image }: { image: DocumentImage }) {
+	return (
+		<div className="group overflow-hidden rounded-lg border">
+			<a
+				href={image.gcs_url}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="block"
+			>
+				<img
+					src={image.gcs_url}
+					alt={image.caption || `Extracted figure ${image.image_index + 1}${image.page_number != null ? ` from page ${image.page_number}` : ""}`}
+					className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
+					loading="lazy"
+				/>
+			</a>
+			<div className="px-2 py-1.5">
+				<div className="flex items-center justify-between">
+					<span className="text-xs font-medium text-muted-foreground">
+						#{image.image_index + 1}
+					</span>
+					{image.page_number != null && (
+						<span className="text-xs text-muted-foreground">
+							p.{image.page_number}
+						</span>
+					)}
+				</div>
+				{image.caption && (
+					<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+						{image.caption}
+					</p>
+				)}
+			</div>
+		</div>
+	);
+}
+
 // ── Tag Assign Dialog ──────────────────────────────────
 
 function TagAssignDialog({
@@ -670,8 +752,8 @@ function TagAssignDialog({
 	);
 
 	const { data: allTags, isLoading } = useQuery({
-		queryKey: ["tags"],
-		queryFn: listTags,
+		queryKey: ["tags", spaceId],
+		queryFn: () => listTags(spaceId),
 	});
 
 	const assignMut = useMutation({
@@ -760,20 +842,20 @@ function TagAssignDialog({
 
 // ── Tag Section ────────────────────────────────────────
 
-function TagSection() {
+function TagSection({ spaceId }: { spaceId: string }) {
 	const queryClient = useQueryClient();
 	const [newName, setNewName] = useState("");
 	const [newColor, setNewColor] = useState("#4A90D9");
 
 	const { data: tags, isLoading } = useQuery({
-		queryKey: ["tags"],
-		queryFn: listTags,
+		queryKey: ["tags", spaceId],
+		queryFn: () => listTags(spaceId),
 	});
 
 	const createMut = useMutation({
-		mutationFn: () => createTag({ name: newName, color: newColor }),
+		mutationFn: () => createTag(spaceId, { name: newName, color: newColor }),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["tags"] });
+			queryClient.invalidateQueries({ queryKey: ["tags", spaceId] });
 			setNewName("");
 		},
 	});

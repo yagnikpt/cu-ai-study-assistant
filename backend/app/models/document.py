@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -33,10 +34,10 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(500), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC), onupdate=datetime.now(UTC)
     )
 
     # Relationships
@@ -59,10 +60,10 @@ class Space(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC), onupdate=datetime.now(UTC)
     )
 
     # Relationships
@@ -74,6 +75,9 @@ class Space(Base):
         back_populates="space", cascade="all, delete-orphan"
     )
     study_plans: Mapped[list["StudyPlan"]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
+    tags: Mapped[list["Tag"]] = relationship(
         back_populates="space", cascade="all, delete-orphan"
     )
 
@@ -119,8 +123,6 @@ class Document(Base):
     file_path: Mapped[str] = mapped_column(String(1000), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     page_count: Mapped[int] = mapped_column(Integer, default=0)
-    course_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(
             DocumentStatus,
@@ -137,15 +139,18 @@ class Document(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC), onupdate=datetime.now(UTC)
     )
 
     # Relationships
     space: Mapped["Space | None"] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+    images: Mapped[list["DocumentImage"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
     tags: Mapped[list["Tag"]] = relationship(
@@ -174,26 +179,62 @@ class DocumentChunk(Base):
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
 
     # Relationships
     document: Mapped["Document"] = relationship(back_populates="chunks")
 
 
-class Tag(Base):
-    __tablename__ = "tags"
+class DocumentImage(Base):
+    """An image extracted from a document, stored in GCS with a multimodal embedding."""
+
+    __tablename__ = "document_images"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    gcs_uri: Mapped[str] = mapped_column(String(1000), nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    image_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="image/png"
+    )
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding = mapped_column(Vector(1408), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
 
     # Relationships
+    document: Mapped["Document"] = relationship(back_populates="images")
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+    __table_args__ = (UniqueConstraint("name", "space_id", name="uq_tags_name_space"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now(UTC)
+    )
+
+    # Relationships
+    space: Mapped["Space"] = relationship(back_populates="tags")
     documents: Mapped[list["Document"]] = relationship(
         secondary=document_tags, back_populates="tags"
     )
@@ -219,7 +260,7 @@ class Quiz(Base):
     topic: Mapped[str | None] = mapped_column(String(500), nullable=True)
     question_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
 
     # Relationships
@@ -255,7 +296,7 @@ class QuizQuestion(Base):
     source_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list)
     source_pages: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
 
     # Relationships
@@ -283,7 +324,7 @@ class QuizAttempt(Base):
     is_correct: Mapped[bool] = mapped_column(default=False)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
 
     # Relationships
@@ -339,10 +380,10 @@ class StudyPlan(Base):
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC), onupdate=datetime.now(UTC)
     )
 
     # Relationships
@@ -393,7 +434,7 @@ class StudyTopic(Base):
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=datetime.now(UTC)
     )
 
     # Relationships
