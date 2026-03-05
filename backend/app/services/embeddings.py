@@ -22,6 +22,7 @@ from vertexai.vision_models import Image as VMImage
 from vertexai.vision_models import MultiModalEmbeddingModel
 
 from app.config import settings
+from app.services.gcp_credentials import get_gcp_credentials
 from app.services.genai_client import get_genai_client
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def _ensure_vertexai() -> None:
         vertexai.init(
             project=settings.gcp_project_id,
             location=settings.gcp_location,
+            credentials=get_gcp_credentials(),
         )
         _vertexai_initialized = True
 

@@ -14,6 +14,7 @@ from uuid import UUID
 from google.cloud import storage
 
 from app.config import settings
+from app.services.gcp_credentials import get_gcp_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ def _get_storage_client() -> storage.Client:
     """Get or create a GCS client (lazy singleton)."""
     global _storage_client
     if _storage_client is None:
-        _storage_client = storage.Client(project=settings.gcp_project_id)
+        _storage_client = storage.Client(
+            project=settings.gcp_project_id,
+            credentials=get_gcp_credentials(),
+        )
     return _storage_client
 
 

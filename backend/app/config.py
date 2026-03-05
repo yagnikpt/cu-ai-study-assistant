@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     gcp_project_id: str = ""
     gcp_location: str = "us-central1"
     gcs_bucket_name: str = ""
+    # Service account key JSON string (for production only).
+    # In development, leave empty to use ADC (gcloud auth application-default login).
+    gcp_service_account_json: str = ""
 
     # Models
     embedding_model: str = "gemini-embedding-001"
