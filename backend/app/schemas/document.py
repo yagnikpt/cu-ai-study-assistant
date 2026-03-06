@@ -68,6 +68,8 @@ class DocumentResponse(BaseModel):
     file_size_bytes: int
     page_count: int
     status: str
+    progress: str | None = None
+    images_progress: str | None = None
     error_message: str | None
     chunk_count: int = 0
     image_count: int = 0

@@ -70,6 +70,8 @@ import type {
 	DocumentImage,
 	DocumentListParams,
 	DocumentStatus,
+	ImageIngestionProgress,
+	IngestionProgress,
 } from "~/lib/types";
 import { cn } from "~/lib/utils";
 
@@ -349,7 +351,7 @@ function FilterBar({
 					<SelectItem value="all">All statuses</SelectItem>
 					<SelectItem value="processing">Processing</SelectItem>
 					<SelectItem value="ready">Ready</SelectItem>
-					<SelectItem value="error">Error</SelectItem>
+					<SelectItem value="failed">Failed</SelectItem>
 				</SelectContent>
 			</Select>
 		</div>
@@ -370,7 +372,7 @@ function StatusIcon({ status }: { status: DocumentStatus }) {
 						{status === "ready" && (
 							<CircleCheck className="size-4 text-green-500" />
 						)}
-						{status === "error" && (
+						{status === "failed" && (
 							<CircleAlert className="size-4 text-destructive" />
 						)}
 					</span>
@@ -378,10 +380,50 @@ function StatusIcon({ status }: { status: DocumentStatus }) {
 				<TooltipContent side="right">
 					{status === "processing" && "Processing"}
 					{status === "ready" && "Ready"}
-					{status === "error" && "Error"}
+					{status === "failed" && "Failed"}
 				</TooltipContent>
 			</Tooltip>
 		</TooltipProvider>
+	);
+}
+
+// ── Progress Labels ────────────────────────────────────
+
+const PROGRESS_LABELS: Record<IngestionProgress, string> = {
+	uploading: "Uploading",
+	parsing: "Parsing",
+	chunking: "Chunking",
+	embedding: "Embedding",
+	storing: "Storing",
+	done: "Done",
+};
+
+const IMAGES_PROGRESS_LABELS: Record<ImageIngestionProgress, string> = {
+	pending: "Pending",
+	uploading: "Uploading",
+	embedding: "Embedding",
+	storing: "Storing",
+	done: "Done",
+	skipped: "Skipped",
+};
+
+function IngestionProgressBadge({ doc }: { doc: Document }) {
+	if (doc.status !== "processing" || !doc.progress) return null;
+
+	return (
+		<div className="flex items-center gap-1.5">
+			<span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+				{PROGRESS_LABELS[doc.progress]}
+			</span>
+			{doc.images_progress &&
+				doc.images_progress !== "pending" &&
+				doc.images_progress !== "skipped" &&
+				doc.images_progress !== "done" && (
+					<span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
+						Images: {IMAGES_PROGRESS_LABELS[doc.images_progress]}
+					</span>
+				)}
+		</div>
 	);
 }
 
@@ -414,6 +456,7 @@ function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 						<span className="truncate text-sm font-medium">
 							{doc.original_filename}
 						</span>
+						<IngestionProgressBadge doc={doc} />
 						{doc.tags.length > 0 && (
 							<div className="hidden items-center gap-1 sm:flex">
 								{doc.tags.slice(0, 3).map((t) => (

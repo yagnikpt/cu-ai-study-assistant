@@ -59,7 +59,23 @@ export interface DocumentTagsUpdateRequest {
 
 // ── Documents ──────────────────────────────────────────
 
-export type DocumentStatus = "processing" | "ready" | "error";
+export type DocumentStatus = "processing" | "ready" | "failed";
+
+export type IngestionProgress =
+	| "uploading"
+	| "parsing"
+	| "chunking"
+	| "embedding"
+	| "storing"
+	| "done";
+
+export type ImageIngestionProgress =
+	| "pending"
+	| "uploading"
+	| "embedding"
+	| "storing"
+	| "done"
+	| "skipped";
 
 export interface DocumentChunk {
 	id: string;
@@ -88,6 +104,8 @@ export interface Document {
 	file_size_bytes: number;
 	page_count: number;
 	status: DocumentStatus;
+	progress: IngestionProgress | null;
+	images_progress: ImageIngestionProgress | null;
 	error_message: string | null;
 	chunk_count: number;
 	image_count: number;

@@ -88,6 +88,28 @@ class DocumentStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class IngestionProgress(str, enum.Enum):
+    """Tracks the main file/chunks ingestion pipeline (excludes images)."""
+
+    UPLOADING = "uploading"
+    PARSING = "parsing"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
+    STORING = "storing"
+    DONE = "done"
+
+
+class ImageIngestionProgress(str, enum.Enum):
+    """Tracks image processing separately since it can be slow."""
+
+    PENDING = "pending"
+    UPLOADING = "uploading"
+    EMBEDDING = "embedding"
+    STORING = "storing"
+    DONE = "done"
+    SKIPPED = "skipped"
+
+
 class QuestionType(str, enum.Enum):
     MCQ = "mcq"
     SHORT_ANSWER = "short_answer"
@@ -133,6 +155,24 @@ class Document(Base):
         default=DocumentStatus.PROCESSING,
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress: Mapped[IngestionProgress | None] = mapped_column(
+        Enum(
+            IngestionProgress,
+            name="ingestion_progress",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        nullable=True,
+    )
+    images_progress: Mapped[ImageIngestionProgress | None] = mapped_column(
+        Enum(
+            ImageIngestionProgress,
+            name="image_ingestion_progress",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        nullable=True,
+    )
     space_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("spaces.id", ondelete="CASCADE"),

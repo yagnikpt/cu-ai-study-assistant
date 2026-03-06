@@ -20,6 +20,8 @@ from app.models import (
     DocumentChunk,
     DocumentImage,
     DocumentStatus,
+    ImageIngestionProgress,
+    IngestionProgress,
     Space,
     Tag,
     document_tags,
@@ -46,6 +48,12 @@ async def _run_ingestion_pipeline(
 
     This runs outside the request lifecycle with its own DB session.
     Supports PDF, DOCX, and PPTX formats via the unified document loader.
+
+    Progress tracking:
+      - `progress` follows the file/chunks pipeline (uploading -> parsing ->
+        chunking -> embedding -> storing -> done).
+      - `images_progress` follows image processing separately (pending ->
+        uploading -> embedding -> storing -> done | skipped).
     """
     from app.database import async_session_factory
     from app.services.chunker import chunk_pages
@@ -60,6 +68,11 @@ async def _run_ingestion_pipeline(
                 logger.error(f"Document {document_id} not found for ingestion")
                 return
 
+            # -- Progress: uploading ------------------------------------------------
+            doc.progress = IngestionProgress.UPLOADING
+            doc.images_progress = ImageIngestionProgress.PENDING
+            await db.commit()
+
             # Step 1: Upload original file to GCS (sync — run in thread pool)
             logger.info(f"Uploading document to GCS: {doc.original_filename}")
             gcs_uri = await asyncio.to_thread(
@@ -70,12 +83,20 @@ async def _run_ingestion_pipeline(
             )
             doc.file_path = gcs_uri
 
+            # -- Progress: parsing --------------------------------------------------
+            doc.progress = IngestionProgress.PARSING
+            await db.commit()
+
             # Step 2: Parse document from bytes (sync — run in thread pool)
             logger.info(f"Parsing document: {doc.original_filename}")
             parsed = await asyncio.to_thread(
                 load_document, original_filename, file_bytes
             )
             doc.page_count = parsed.page_count
+
+            # -- Progress: chunking -------------------------------------------------
+            doc.progress = IngestionProgress.CHUNKING
+            await db.commit()
 
             # Step 3: Chunk the parsed pages (sync — run in thread pool)
             logger.info("Chunking document into semantic chunks")
@@ -88,16 +109,26 @@ async def _run_ingestion_pipeline(
 
             if not chunks:
                 doc.status = DocumentStatus.FAILED
+                doc.progress = None
+                doc.images_progress = None
                 doc.error_message = (
                     "No text content could be extracted from the document."
                 )
                 await db.commit()
                 return
 
+            # -- Progress: embedding ------------------------------------------------
+            doc.progress = IngestionProgress.EMBEDDING
+            await db.commit()
+
             # Step 4: Embed all text chunks
             logger.info(f"Generating embeddings for {len(chunks)} chunks")
             chunk_texts = [c.content for c in chunks]
             embeddings = await embed_texts(chunk_texts)
+
+            # -- Progress: storing --------------------------------------------------
+            doc.progress = IngestionProgress.STORING
+            await db.commit()
 
             # Step 5: Store text chunks in DB
             for chunk, embedding in zip(chunks, embeddings):
@@ -114,9 +145,17 @@ async def _run_ingestion_pipeline(
                 )
                 db.add(db_chunk)
 
+            # -- Progress: main pipeline done ---------------------------------------
+            doc.progress = IngestionProgress.DONE
+            await db.commit()
+
             # Step 6: Upload images to GCS + embed + store
             if parsed.images:
                 logger.info(f"Processing {len(parsed.images)} images")
+
+                # -- Images progress: uploading -------------------------------------
+                doc.images_progress = ImageIngestionProgress.UPLOADING
+                await db.commit()
 
                 # Upload each image to GCS (sync — run in thread pool)
                 image_gcs_uris: list[str] = []
@@ -132,11 +171,19 @@ async def _run_ingestion_pipeline(
                     image_gcs_uris.append(img_gcs_uri)
                     image_bytes_list.append(img.data)
 
+                # -- Images progress: embedding -------------------------------------
+                doc.images_progress = ImageIngestionProgress.EMBEDDING
+                await db.commit()
+
                 # Generate multimodal embeddings + captions for images
                 logger.info(
                     f"Generating image embeddings for {len(image_bytes_list)} images"
                 )
                 image_embed_results = await embed_images(image_bytes_list)
+
+                # -- Images progress: storing ---------------------------------------
+                doc.images_progress = ImageIngestionProgress.STORING
+                await db.commit()
 
                 # Store DocumentImage records
                 for idx, img in enumerate(parsed.images):
@@ -158,6 +205,11 @@ async def _run_ingestion_pipeline(
                     )
                     db.add(db_image)
 
+                # -- Images progress: done ------------------------------------------
+                doc.images_progress = ImageIngestionProgress.DONE
+            else:
+                doc.images_progress = ImageIngestionProgress.SKIPPED
+
             doc.status = DocumentStatus.READY
             await db.commit()
             logger.info(
@@ -170,6 +222,8 @@ async def _run_ingestion_pipeline(
             doc = await db.get(Document, document_id)
             if doc:
                 doc.status = DocumentStatus.FAILED
+                doc.progress = None
+                doc.images_progress = None
                 doc.error_message = str(e)[:1000]
                 await db.commit()
 
@@ -253,6 +307,8 @@ async def upload_document(
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
         status=doc.status.value,
+        progress=doc.progress.value if doc.progress else None,
+        images_progress=doc.images_progress.value if doc.images_progress else None,
         error_message=doc.error_message,
         chunk_count=0,
         tags=[],
@@ -322,6 +378,10 @@ async def list_documents(
                 file_size_bytes=doc.file_size_bytes,
                 page_count=doc.page_count,
                 status=doc.status.value,
+                progress=doc.progress.value if doc.progress else None,
+                images_progress=doc.images_progress.value
+                if doc.images_progress
+                else None,
                 error_message=doc.error_message,
                 chunk_count=chunk_counts.get(doc.id, 0),
                 image_count=image_counts.get(doc.id, 0),
@@ -371,6 +431,8 @@ async def get_document(db: DBSession, document_id: uuid.UUID):
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
         status=doc.status.value,
+        progress=doc.progress.value if doc.progress else None,
+        images_progress=doc.images_progress.value if doc.images_progress else None,
         error_message=doc.error_message,
         chunk_count=chunk_count,
         image_count=image_count,
@@ -424,6 +486,8 @@ async def update_document(
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
         status=doc.status.value,
+        progress=doc.progress.value if doc.progress else None,
+        images_progress=doc.images_progress.value if doc.images_progress else None,
         error_message=doc.error_message,
         chunk_count=chunk_count,
         image_count=image_count,
@@ -515,6 +579,8 @@ async def add_tags_to_document(
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
         status=doc.status.value,
+        progress=doc.progress.value if doc.progress else None,
+        images_progress=doc.images_progress.value if doc.images_progress else None,
         error_message=doc.error_message,
         chunk_count=chunk_count,
         image_count=image_count,
@@ -571,6 +637,8 @@ async def remove_tag_from_document(
         file_size_bytes=doc.file_size_bytes,
         page_count=doc.page_count,
         status=doc.status.value,
+        progress=doc.progress.value if doc.progress else None,
+        images_progress=doc.images_progress.value if doc.images_progress else None,
         error_message=doc.error_message,
         chunk_count=chunk_count,
         image_count=image_count,
