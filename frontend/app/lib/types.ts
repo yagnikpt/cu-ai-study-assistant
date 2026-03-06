@@ -366,6 +366,73 @@ export interface QuizResultsResponse {
 	topic_strengths: TopicStrength[];
 }
 
+// ── Flashcards ────────────────────────────────────────
+
+export type FlashcardType = "term_definition" | "question_answer";
+export type ReviewRating = "again" | "hard" | "good" | "easy";
+
+export interface FlashcardCard {
+	id: string;
+	card_type: FlashcardType;
+	front: string;
+	back: string;
+	explanation: string | null;
+	source_pages: string | null;
+}
+
+export interface FlashcardDeck {
+	id: string;
+	title: string;
+	topic: string | null;
+	document_id: string | null;
+	card_count: number;
+	cards: FlashcardCard[];
+	created_at: ISODateString;
+}
+
+export interface FlashcardDeckListResponse {
+	decks: FlashcardDeck[];
+	total: number;
+}
+
+export interface FlashcardGenerateRequest {
+	document_id?: string | null;
+	topic?: string | null;
+	card_count?: number;
+}
+
+export interface ReviewSubmission {
+	flashcard_id: string;
+	rating: ReviewRating;
+}
+
+export interface ReviewRequest {
+	reviews: ReviewSubmission[];
+}
+
+export interface ReviewResponse {
+	deck_id: string;
+	reviews_recorded: number;
+}
+
+export interface CardStats {
+	flashcard_id: string;
+	front: string;
+	review_count: number;
+	last_rating: ReviewRating | null;
+	ratings_breakdown: Record<ReviewRating, number>;
+}
+
+export interface DeckStatsResponse {
+	deck_id: string;
+	title: string;
+	total_cards: number;
+	total_reviews: number;
+	cards_reviewed: number;
+	cards_not_reviewed: number;
+	card_stats: CardStats[];
+}
+
 // ── Study Plans ───────────────────────────────────────
 
 export type TopicPriority = "high" | "medium" | "low";

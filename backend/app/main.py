@@ -15,6 +15,7 @@ from app.routers import (
     analytics,
     auth,
     documents,
+    flashcards,
     qa,
     quizzes,
     spaces,
@@ -67,6 +68,7 @@ app.include_router(tags.router)
 app.include_router(qa.router)
 app.include_router(summaries.router)
 app.include_router(quizzes.router)
+app.include_router(flashcards.router)
 app.include_router(study_plans.router)
 app.include_router(analytics.router)
 

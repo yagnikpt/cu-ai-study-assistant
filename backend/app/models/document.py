@@ -74,6 +74,9 @@ class Space(Base):
     quizzes: Mapped[list["Quiz"]] = relationship(
         back_populates="space", cascade="all, delete-orphan"
     )
+    flashcard_decks: Mapped[list["FlashcardDeck"]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
     study_plans: Mapped[list["StudyPlan"]] = relationship(
         back_populates="space", cascade="all, delete-orphan"
     )
@@ -197,6 +200,9 @@ class Document(Base):
         secondary=document_tags, back_populates="documents"
     )
     quizzes: Mapped[list["Quiz"]] = relationship(back_populates="document")
+    flashcard_decks: Mapped[list["FlashcardDeck"]] = relationship(
+        back_populates="document"
+    )
 
 
 class DocumentChunk(Base):
@@ -479,3 +485,116 @@ class StudyTopic(Base):
 
     # Relationships
     plan: Mapped["StudyPlan"] = relationship(back_populates="topics")
+
+
+class FlashcardType(str, enum.Enum):
+    TERM_DEFINITION = "term_definition"
+    QUESTION_ANSWER = "question_answer"
+
+
+class ReviewRating(str, enum.Enum):
+    AGAIN = "again"
+    HARD = "hard"
+    GOOD = "good"
+    EASY = "easy"
+
+
+class FlashcardDeck(Base):
+    __tablename__ = "flashcard_decks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    space_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    topic: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    card_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now(UTC)
+    )
+
+    # Relationships
+    space: Mapped["Space | None"] = relationship(back_populates="flashcard_decks")
+    document: Mapped["Document | None"] = relationship(back_populates="flashcard_decks")
+    cards: Mapped[list["Flashcard"]] = relationship(
+        back_populates="deck", cascade="all, delete-orphan"
+    )
+
+
+class Flashcard(Base):
+    __tablename__ = "flashcards"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    deck_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flashcard_decks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    card_type: Mapped[FlashcardType] = mapped_column(
+        Enum(
+            FlashcardType,
+            name="flashcard_type",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        default=FlashcardType.TERM_DEFINITION,
+    )
+    front: Mapped[str] = mapped_column(Text, nullable=False)
+    back: Mapped[str] = mapped_column(Text, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    source_pages: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now(UTC)
+    )
+
+    # Relationships
+    deck: Mapped["FlashcardDeck"] = relationship(back_populates="cards")
+    reviews: Mapped[list["FlashcardReview"]] = relationship(
+        back_populates="flashcard", cascade="all, delete-orphan"
+    )
+
+
+class FlashcardReview(Base):
+    __tablename__ = "flashcard_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    deck_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flashcard_decks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    flashcard_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flashcards.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rating: Mapped[ReviewRating] = mapped_column(
+        Enum(
+            ReviewRating,
+            name="review_rating",
+            create_type=False,
+            values_callable=lambda e: [member.value for member in e],
+        ),
+        nullable=False,
+    )
+    reviewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.now(UTC)
+    )
+
+    # Relationships
+    deck: Mapped["FlashcardDeck"] = relationship()
+    flashcard: Mapped["Flashcard"] = relationship(back_populates="reviews")

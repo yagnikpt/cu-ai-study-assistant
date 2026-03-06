@@ -24,6 +24,7 @@ export default [
 		route("spaces/:spaceId/qa", "routes/qa.tsx"),
 		route("spaces/:spaceId/summaries", "routes/summaries.tsx"),
 		route("spaces/:spaceId/quizzes", "routes/quizzes.tsx"),
+		route("spaces/:spaceId/flashcards", "routes/flashcards.tsx"),
 		route("spaces/:spaceId/study-plans", "routes/study-plans.tsx"),
 		route(
 			"spaces/:spaceId/quizzes/:quizId/take",
@@ -32,6 +33,10 @@ export default [
 		route(
 			"spaces/:spaceId/quizzes/:quizId/results",
 			"routes/quizzes.$quizId.results.tsx",
+		),
+		route(
+			"spaces/:spaceId/flashcards/:deckId/study",
+			"routes/flashcards.$deckId.study.tsx",
 		),
 	]),
 ] satisfies RouteConfig;

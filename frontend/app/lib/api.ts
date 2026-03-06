@@ -1,12 +1,16 @@
 import type {
 	AskRequest,
 	AskResponse,
+	DeckStatsResponse,
 	Document,
 	DocumentChunk,
 	DocumentImage,
 	DocumentListParams,
 	DocumentListResponse,
 	DocumentTagsUpdateRequest,
+	FlashcardDeck,
+	FlashcardDeckListResponse,
+	FlashcardGenerateRequest,
 	ProfileAnalytics,
 	QAStreamEvent,
 	Quiz,
@@ -15,6 +19,8 @@ import type {
 	QuizGenerateRequest,
 	QuizListResponse,
 	QuizResultsResponse,
+	ReviewRequest,
+	ReviewResponse,
 	SearchRequest,
 	SearchResponse,
 	Space,
@@ -596,4 +602,91 @@ export async function getProfileAnalytics(): Promise<ProfileAnalytics> {
 		signal: timeoutSignal(),
 	});
 	return handle<ProfileAnalytics>(resp);
+}
+
+// ── Flashcards ─────────────────────────────────────────
+
+export async function generateFlashcardDeck(
+	spaceId: string,
+	data: FlashcardGenerateRequest,
+): Promise<FlashcardDeck> {
+	const resp = await fetch(url(`/spaces/${spaceId}/flashcards/generate`), {
+		...defaultOpts,
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+		signal: timeoutSignal(),
+	});
+	return handle<FlashcardDeck>(resp);
+}
+
+export async function listFlashcardDecks(
+	spaceId: string,
+	documentId?: string,
+): Promise<FlashcardDeckListResponse> {
+	const qs = documentId
+		? `?${new URLSearchParams({ document_id: documentId })}`
+		: "";
+	const resp = await fetch(url(`/spaces/${spaceId}/flashcards/${qs}`), {
+		...defaultOpts,
+		signal: timeoutSignal(),
+	});
+	return handle<FlashcardDeckListResponse>(resp);
+}
+
+export async function getFlashcardDeck(
+	spaceId: string,
+	deckId: string,
+): Promise<FlashcardDeck> {
+	const resp = await fetch(url(`/spaces/${spaceId}/flashcards/${deckId}`), {
+		...defaultOpts,
+		signal: timeoutSignal(),
+	});
+	return handle<FlashcardDeck>(resp);
+}
+
+export async function submitReviews(
+	spaceId: string,
+	deckId: string,
+	data: ReviewRequest,
+): Promise<ReviewResponse> {
+	const resp = await fetch(
+		url(`/spaces/${spaceId}/flashcards/${deckId}/review`),
+		{
+			...defaultOpts,
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+			signal: timeoutSignal(),
+		},
+	);
+	return handle<ReviewResponse>(resp);
+}
+
+export async function getDeckStats(
+	spaceId: string,
+	deckId: string,
+): Promise<DeckStatsResponse> {
+	const resp = await fetch(
+		url(`/spaces/${spaceId}/flashcards/${deckId}/stats`),
+		{
+			...defaultOpts,
+			signal: timeoutSignal(),
+		},
+	);
+	return handle<DeckStatsResponse>(resp);
+}
+
+export async function deleteFlashcardDeck(
+	spaceId: string,
+	deckId: string,
+): Promise<void> {
+	const resp = await fetch(url(`/spaces/${spaceId}/flashcards/${deckId}`), {
+		...defaultOpts,
+		method: "DELETE",
+		signal: timeoutSignal(),
+	});
+	if (!resp.ok) {
+		await handle(resp);
+	}
 }

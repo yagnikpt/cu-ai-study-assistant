@@ -4,6 +4,7 @@ import {
 	CalendarDays,
 	FileText,
 	GraduationCap,
+	Layers,
 	LogOut,
 	MessageCircle,
 	ScrollText,
@@ -72,6 +73,11 @@ function LayoutContent() {
 			to: `/spaces/${spaceId}/quizzes`,
 			label: "Quizzes",
 			icon: GraduationCap,
+		},
+		{
+			to: `/spaces/${spaceId}/flashcards`,
+			label: "Flashcards",
+			icon: Layers,
 		},
 		{
 			to: `/spaces/${spaceId}/study-plans`,
