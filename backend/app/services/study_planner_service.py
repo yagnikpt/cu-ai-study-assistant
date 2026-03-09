@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from google import genai
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.services.genai_client import get_genai_client
@@ -62,7 +62,7 @@ MATERIAL:
 
 
 async def generate_study_plan(
-    db: AsyncSession,
+    db: Session,
     space_id: uuid.UUID,
     document_ids: list[uuid.UUID] | None = None,
     exam_date: datetime | None = None,
@@ -71,7 +71,7 @@ async def generate_study_plan(
     """Generate a study plan from course materials using Gemini.
 
     Args:
-        db: Async database session.
+        db: Database session.
         space_id: Space containing the documents.
         document_ids: Specific documents to use (or all ready docs in space).
         exam_date: Target exam date for scheduling.
@@ -84,7 +84,7 @@ async def generate_study_plan(
     if document_ids:
         doc_ids = document_ids
     else:
-        result = await db.execute(
+        result = db.execute(
             select(Document.id).where(
                 Document.space_id == space_id,
                 Document.status == "ready",
@@ -104,7 +104,7 @@ async def generate_study_plan(
         .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
         .limit(30)  # generous limit for good topic coverage
     )
-    result = await db.execute(query)
+    result = db.execute(query)
     rows = result.all()
 
     if not rows:
@@ -151,7 +151,7 @@ async def generate_study_plan(
         status=StudyPlanStatus.READY,
     )
     db.add(plan)
-    await db.flush()
+    db.flush()
 
     for idx, topic_data in enumerate(data.get("topics", [])):
         priority_str = topic_data.get("priority", "medium").lower()
@@ -179,8 +179,8 @@ async def generate_study_plan(
         )
         db.add(topic)
 
-    await db.flush()
-    await db.refresh(plan)
+    db.flush()
+    db.refresh(plan)
     return plan
 
 

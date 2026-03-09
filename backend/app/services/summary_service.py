@@ -17,7 +17,7 @@ from app.services.genai_client import get_genai_client
 from app.services.vector_search import search_similar_chunks, search_similar_images
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk
 
@@ -47,7 +47,7 @@ DETAIL_INSTRUCTIONS = {
 
 
 async def _retrieve_chunks(
-    db: AsyncSession,
+    db: Session,
     topic: str | None = None,
     document_id: uuid.UUID | None = None,
     page_start: int | None = None,
@@ -70,7 +70,7 @@ async def _retrieve_chunks(
             .where(DocumentChunk.page_end <= page_end)
             .order_by(DocumentChunk.chunk_index)
         )
-        result = await db.execute(query)
+        result = db.execute(query)
         rows = result.all()
 
         for chunk, doc_name in rows:
@@ -100,13 +100,13 @@ async def _retrieve_chunks(
         if document_id:
             doc_ids = [document_id]
         elif space_id:
-            result = await db.execute(
+            result = db.execute(
                 select(Document.id).where(
                     Document.space_id == space_id, Document.status == "ready"
                 )
             )
             doc_ids = list(result.scalars().all())
-        chunks = await search_similar_chunks(
+        chunks = search_similar_chunks(
             db=db,
             query_embedding=query_embedding,
             top_k=10,
@@ -233,14 +233,14 @@ def _build_source_context(chunks: list[dict]) -> str:
 
 
 async def _retrieve_images(
-    db: AsyncSession,
+    db: Session,
     topic: str,
     document_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """Retrieve relevant images for the given topic via multimodal embedding search."""
     try:
         mm_embedding = await embed_query_multimodal(topic)
-        return await search_similar_images(
+        return search_similar_images(
             db=db,
             query_embedding=mm_embedding,
             top_k=3,
@@ -252,7 +252,7 @@ async def _retrieve_images(
 
 
 async def generate_summary(
-    db: AsyncSession,
+    db: Session,
     topic: str | None = None,
     document_id: uuid.UUID | None = None,
     page_start: int | None = None,
@@ -285,7 +285,7 @@ async def generate_summary(
     # Retrieve relevant images
     doc_ids = [document_id] if document_id else None
     if not doc_ids and space_id:
-        result = await db.execute(
+        result = db.execute(
             select(Document.id).where(
                 Document.space_id == space_id, Document.status == "ready"
             )
@@ -327,7 +327,7 @@ async def generate_summary(
 
 
 async def generate_summary_stream(
-    db: AsyncSession,
+    db: Session,
     topic: str | None = None,
     document_id: uuid.UUID | None = None,
     page_start: int | None = None,
@@ -369,7 +369,7 @@ async def generate_summary_stream(
     # Retrieve and emit relevant images
     doc_ids = [document_id] if document_id else None
     if not doc_ids and space_id:
-        result = await db.execute(
+        result = db.execute(
             select(Document.id).where(
                 Document.space_id == space_id, Document.status == "ready"
             )

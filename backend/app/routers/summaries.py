@@ -19,12 +19,12 @@ from app.services.summary_service import generate_summary, generate_summary_stre
 router = APIRouter(prefix="/api/v1/spaces/{space_id}/summaries", tags=["summaries"])
 
 
-async def _get_space_doc_ids(db, space_id: uuid.UUID) -> list[uuid.UUID]:
+def _get_space_doc_ids(db, space_id: uuid.UUID) -> list[uuid.UUID]:
     """Get all ready document IDs belonging to a space."""
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
-    result = await db.execute(
+    result = db.execute(
         select(Document.id).where(
             Document.space_id == space_id, Document.status == "ready"
         )
@@ -54,7 +54,7 @@ async def create_summary(db: DBSession, space_id: uuid.UUID, body: SummaryReques
 
     # Validate that document belongs to this space if provided
     if body.document_id:
-        space_doc_ids = await _get_space_doc_ids(db, space_id)
+        space_doc_ids = _get_space_doc_ids(db, space_id)
         if body.document_id not in space_doc_ids:
             raise HTTPException(
                 status_code=400,
@@ -106,7 +106,7 @@ async def create_summary_stream(
         )
 
     if body.document_id:
-        space_doc_ids = await _get_space_doc_ids(db, space_id)
+        space_doc_ids = _get_space_doc_ids(db, space_id)
         if body.document_id not in space_doc_ids:
             raise HTTPException(
                 status_code=400,

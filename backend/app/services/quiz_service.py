@@ -11,7 +11,7 @@ import uuid
 from google import genai
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import (
@@ -72,7 +72,7 @@ Output ONLY valid JSON matching this exact schema:
 
 
 async def generate_quiz(
-    db: AsyncSession,
+    db: Session,
     document_id: uuid.UUID | None = None,
     topic: str | None = None,
     question_count: int = 5,
@@ -82,7 +82,7 @@ async def generate_quiz(
     """Generate a quiz from course materials.
 
     Args:
-        db: Async database session.
+        db: Database session.
         document_id: Generate from a specific document.
         topic: Topic to generate questions about.
         question_count: Number of questions to generate.
@@ -105,13 +105,13 @@ async def generate_quiz(
         if document_id:
             doc_ids = [document_id]
         elif space_id:
-            result = await db.execute(
+            result = db.execute(
                 select(Document.id).where(
                     Document.space_id == space_id, Document.status == "ready"
                 )
             )
             doc_ids = list(result.scalars().all())
-        chunks = await search_similar_chunks(
+        chunks = search_similar_chunks(
             db=db,
             query_embedding=query_embedding,
             top_k=10,
@@ -127,7 +127,7 @@ async def generate_quiz(
             .order_by(DocumentChunk.chunk_index)
             .limit(15)
         )
-        result = await db.execute(query)
+        result = db.execute(query)
         rows = result.all()
 
         for chunk, doc_name in rows:
@@ -145,7 +145,7 @@ async def generate_quiz(
             )
 
         # Derive topic from document
-        doc = await db.get(Document, document_id)
+        doc = db.get(Document, document_id)
         if doc:
             effective_topic = doc.original_filename.rsplit(".", 1)[0]
 
@@ -218,7 +218,7 @@ Generate the questions as JSON."""
         question_count=len(quiz_data.get("questions", [])),
     )
     db.add(quiz)
-    await db.flush()  # Get the quiz ID
+    db.flush()  # Get the quiz ID
 
     # Create QuizQuestion records
     for q_data in quiz_data.get("questions", []):
@@ -240,21 +240,21 @@ Generate the questions as JSON."""
         )
         db.add(question)
 
-    await db.flush()
+    db.flush()
 
     logger.info(f"Generated quiz '{quiz.title}' with {quiz.question_count} questions")
     return quiz
 
 
-async def grade_attempt(
-    db: AsyncSession,
+def grade_attempt(
+    db: Session,
     quiz_id: uuid.UUID,
     answers: list[dict],
 ) -> dict:
     """Grade a quiz attempt and provide feedback.
 
     Args:
-        db: Async database session.
+        db: Database session.
         quiz_id: The quiz being attempted.
         answers: List of {question_id, answer} dicts.
 
@@ -262,11 +262,11 @@ async def grade_attempt(
         Grading results with per-question feedback.
     """
     # Fetch quiz with questions
-    quiz = await db.get(Quiz, quiz_id)
+    quiz = db.get(Quiz, quiz_id)
     if not quiz:
         raise ValueError(f"Quiz {quiz_id} not found")
 
-    questions_result = await db.execute(
+    questions_result = db.execute(
         select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
     )
     questions = {q.id: q for q in questions_result.scalars().all()}
@@ -345,25 +345,25 @@ async def grade_attempt(
     }
 
 
-async def get_quiz_results(
-    db: AsyncSession,
+def get_quiz_results(
+    db: Session,
     quiz_id: uuid.UUID,
 ) -> dict:
     """Get aggregated results and topic analysis for a quiz.
 
     Args:
-        db: Async database session.
+        db: Database session.
         quiz_id: The quiz to get results for.
 
     Returns:
         Results dict with attempts count, best score, and topic strengths.
     """
-    quiz = await db.get(Quiz, quiz_id)
+    quiz = db.get(Quiz, quiz_id)
     if not quiz:
         raise ValueError(f"Quiz {quiz_id} not found")
 
     # Get all attempts for this quiz
-    attempts_result = await db.execute(
+    attempts_result = db.execute(
         select(QuizAttempt)
         .where(QuizAttempt.quiz_id == quiz_id)
         .order_by(QuizAttempt.attempted_at)

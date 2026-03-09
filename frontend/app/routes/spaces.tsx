@@ -196,16 +196,18 @@ function SpaceCard({
 	});
 
 	return (
-		<Card className="group cursor-pointer transition-all hover:shadow-md hover:border-primary/40">
+		<Card className="group cursor-pointer transition-all hover:shadow-md hover:border-primary/40 gap-2 pt-6 pb-2">
 			<CardHeader className="pb-2" onClick={onClick}>
 				<div className="flex items-start justify-between">
 					<CardTitle className="text-base line-clamp-1">{name}</CardTitle>
 					<ArrowRight className="size-4 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
 				</div>
-				{description && (
+				{description ? (
 					<CardDescription className="line-clamp-2">
 						{description}
 					</CardDescription>
+				) : (
+					<CardDescription className="line-clamp-2">...</CardDescription>
 				)}
 			</CardHeader>
 			<CardContent onClick={onClick}>
@@ -216,8 +218,9 @@ function SpaceCard({
 					<span className="text-xs">{date}</span>
 				</div>
 			</CardContent>
+			<div className="flex-1" />
 			<Separator />
-			<div className="flex justify-end px-4 py-2">
+			<div className="flex justify-end px-4">
 				<Button
 					variant="ghost"
 					size="sm"

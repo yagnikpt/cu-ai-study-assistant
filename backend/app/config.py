@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     )
 
     # Database
-    database_url: str = "postgresql+asyncpg://study_assistant:study_assistant@localhost:5432/study_assistant"
+    database_url: str = "postgresql+psycopg2://study_assistant:study_assistant@localhost:5432/study_assistant"
 
     # GCP
     gcp_project_id: str = ""
@@ -53,11 +53,6 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
-
-    @property
-    def sync_database_url(self) -> str:
-        """Sync URL for Alembic (replaces asyncpg with psycopg2)."""
-        return self.database_url.replace("+asyncpg", "")
 
 
 settings = Settings()

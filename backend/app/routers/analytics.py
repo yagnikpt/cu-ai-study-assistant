@@ -42,12 +42,10 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
 
     # ── User's space IDs ──
     space_q = select(Space.id).where(Space.user_id == user.id)
-    space_result = await db.execute(
-        select(func.count()).select_from(space_q.subquery())
-    )
+    space_result = db.execute(select(func.count()).select_from(space_q.subquery()))
     spaces_count = space_result.scalar() or 0
 
-    space_ids = (await db.execute(space_q)).scalars().all()
+    space_ids = db.execute(space_q).scalars().all()
 
     if not space_ids:
         return ProfileAnalytics(spaces_count=0)
@@ -61,7 +59,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
         .label("processing"),
         func.count().filter(Document.status == DocumentStatus.FAILED).label("failed"),
     ).where(Document.space_id.in_(space_ids))
-    doc_row = (await db.execute(doc_q)).one()
+    doc_row = db.execute(doc_q).one()
     doc_stats = DocumentStats(
         total=doc_row.total,
         ready=doc_row.ready,
@@ -71,14 +69,14 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
 
     # ── Quiz stats ──
     quiz_count_q = select(func.count()).where(Quiz.space_id.in_(space_ids))
-    quiz_count = (await db.execute(quiz_count_q)).scalar() or 0
+    quiz_count = db.execute(quiz_count_q).scalar() or 0
 
     # Quiz attempts + avg score
     quiz_ids_q = select(Quiz.id).where(Quiz.space_id.in_(space_ids))
     attempt_q = select(
         func.count().label("total"),
     ).where(QuizAttempt.quiz_id.in_(quiz_ids_q))
-    attempts_count = (await db.execute(attempt_q)).scalar() or 0
+    attempts_count = db.execute(attempt_q).scalar() or 0
 
     # Average score across all attempts (grouped by quiz attempt session)
     # Score = (correct / total questions) * 100 per quiz
@@ -89,7 +87,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
                 "avg_correct"
             )
         ).where(QuizAttempt.quiz_id.in_(quiz_ids_q))
-        avg_result = (await db.execute(score_q)).scalar()
+        avg_result = db.execute(score_q).scalar()
         avg_score = round((avg_result or 0) * 100, 1)
 
     # ── Quiz score trend (last 10 quiz sessions) ──
@@ -107,7 +105,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
             .order_by(cast(QuizAttempt.attempted_at, Date).desc())
             .limit(10)
         )
-        trend_rows = (await db.execute(trend_q)).all()
+        trend_rows = db.execute(trend_q).all()
         score_trend = [
             QuizScorePoint(date=str(row.day), score=round(row.score, 1))
             for row in reversed(trend_rows)
@@ -129,7 +127,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
             .order_by(func.avg(case((QuizAttempt.is_correct, 1.0), else_=0.0)).asc())
             .limit(8)
         )
-        topic_rows = (await db.execute(topic_q)).all()
+        topic_rows = db.execute(topic_q).all()
         topic_strengths = [
             TopicStrengthItem(
                 topic=row.question_text[:60],
@@ -143,7 +141,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
 
     # ── Study plan stats ──
     plan_q = select(func.count()).where(StudyPlan.space_id.in_(space_ids))
-    total_plans = (await db.execute(plan_q)).scalar() or 0
+    total_plans = db.execute(plan_q).scalar() or 0
 
     topic_q = (
         select(
@@ -154,7 +152,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
         .join(StudyPlan, StudyTopic.plan_id == StudyPlan.id)
         .where(StudyPlan.space_id.in_(space_ids))
     )
-    topic_row = (await db.execute(topic_q)).one()
+    topic_row = db.execute(topic_q).one()
     study_stats = StudyPlanStats(
         total_plans=total_plans,
         topics_total=topic_row.total,
@@ -176,7 +174,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
         activity_map[day]  # trigger default
 
     # Docs uploaded
-    doc_activity = await db.execute(
+    doc_activity = db.execute(
         select(
             cast(Document.created_at, Date).label("day"),
             func.count().label("cnt"),
@@ -188,7 +186,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
         activity_map[str(row.day)]["documents"] = row.cnt
 
     # Quizzes created
-    quiz_activity = await db.execute(
+    quiz_activity = db.execute(
         select(
             cast(Quiz.created_at, Date).label("day"),
             func.count().label("cnt"),
@@ -200,7 +198,7 @@ async def get_profile_analytics(db: DBSession, user: CurrentUser):
         activity_map[str(row.day)]["quizzes"] = row.cnt
 
     # Plans created
-    plan_activity = await db.execute(
+    plan_activity = db.execute(
         select(
             cast(StudyPlan.created_at, Date).label("day"),
             func.count().label("cnt"),

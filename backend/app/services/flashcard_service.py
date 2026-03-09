@@ -11,7 +11,7 @@ import uuid
 from google import genai
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import (
@@ -69,7 +69,7 @@ Output ONLY valid JSON matching this exact schema:
 
 
 async def generate_flashcard_deck(
-    db: AsyncSession,
+    db: Session,
     document_id: uuid.UUID | None = None,
     topic: str | None = None,
     card_count: int = 10,
@@ -78,7 +78,7 @@ async def generate_flashcard_deck(
     """Generate a flashcard deck from course materials.
 
     Args:
-        db: Async database session.
+        db: Database session.
         document_id: Generate from a specific document.
         topic: Topic to generate flashcards about.
         card_count: Number of cards to generate.
@@ -97,13 +97,13 @@ async def generate_flashcard_deck(
         if document_id:
             doc_ids = [document_id]
         elif space_id:
-            result = await db.execute(
+            result = db.execute(
                 select(Document.id).where(
                     Document.space_id == space_id, Document.status == "ready"
                 )
             )
             doc_ids = list(result.scalars().all())
-        chunks = await search_similar_chunks(
+        chunks = search_similar_chunks(
             db=db,
             query_embedding=query_embedding,
             top_k=10,
@@ -118,7 +118,7 @@ async def generate_flashcard_deck(
             .order_by(DocumentChunk.chunk_index)
             .limit(15)
         )
-        result = await db.execute(query)
+        result = db.execute(query)
         rows = result.all()
 
         for chunk, doc_name in rows:
@@ -136,7 +136,7 @@ async def generate_flashcard_deck(
             )
 
         # Derive topic from document
-        doc = await db.get(Document, document_id)
+        doc = db.get(Document, document_id)
         if doc:
             effective_topic = doc.original_filename.rsplit(".", 1)[0]
 
@@ -207,7 +207,7 @@ Generate the flashcards as JSON."""
         card_count=len(deck_data.get("cards", [])),
     )
     db.add(deck)
-    await db.flush()
+    db.flush()
 
     # Create Flashcard records
     for c_data in deck_data.get("cards", []):
@@ -228,21 +228,21 @@ Generate the flashcards as JSON."""
         )
         db.add(card)
 
-    await db.flush()
+    db.flush()
 
     logger.info(f"Generated flashcard deck '{deck.title}' with {deck.card_count} cards")
     return deck
 
 
-async def record_reviews(
-    db: AsyncSession,
+def record_reviews(
+    db: Session,
     deck_id: uuid.UUID,
     reviews: list[dict],
 ) -> int:
     """Record self-rating reviews for flashcards.
 
     Args:
-        db: Async database session.
+        db: Database session.
         deck_id: The deck being studied.
         reviews: List of {flashcard_id, rating} dicts.
 
@@ -276,36 +276,34 @@ async def record_reviews(
         db.add(review)
         count += 1
 
-    await db.flush()
+    db.flush()
     logger.info(f"Recorded {count} reviews for deck {deck_id}")
     return count
 
 
-async def get_deck_stats(
-    db: AsyncSession,
+def get_deck_stats(
+    db: Session,
     deck_id: uuid.UUID,
 ) -> dict:
     """Get study statistics for a flashcard deck.
 
     Args:
-        db: Async database session.
+        db: Database session.
         deck_id: The deck to get stats for.
 
     Returns:
         Stats dict with per-card review breakdowns.
     """
-    deck = await db.get(FlashcardDeck, deck_id)
+    deck = db.get(FlashcardDeck, deck_id)
     if not deck:
         raise ValueError(f"Deck {deck_id} not found")
 
     # Get all cards for this deck
-    cards_result = await db.execute(
-        select(Flashcard).where(Flashcard.deck_id == deck_id)
-    )
+    cards_result = db.execute(select(Flashcard).where(Flashcard.deck_id == deck_id))
     cards = cards_result.scalars().all()
 
     # Get all reviews for this deck
-    reviews_result = await db.execute(
+    reviews_result = db.execute(
         select(FlashcardReview)
         .where(FlashcardReview.deck_id == deck_id)
         .order_by(FlashcardReview.reviewed_at)

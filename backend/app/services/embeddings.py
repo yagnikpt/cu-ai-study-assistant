@@ -235,3 +235,118 @@ async def embed_query_multimodal(text: str) -> list[float]:
     if not response.text_embedding:
         raise ValueError("Multimodal model returned no text embedding")
     return response.text_embedding
+
+
+# ── Synchronous wrappers (for background tasks / ingestion pipeline) ──
+
+
+def embed_texts_sync(texts: list[str]) -> list[list[float]]:
+    """Generate embeddings for a list of texts using Gemini (synchronous).
+
+    Identical to ``embed_texts`` but calls the SDK directly without
+    ``asyncio.to_thread``, suitable for use in synchronous background
+    tasks such as the document ingestion pipeline.
+
+    Args:
+        texts: List of text strings to embed. Max ~2048 tokens each.
+
+    Returns:
+        List of embedding vectors (each is a list of 768 floats).
+    """
+    if not texts:
+        return []
+
+    client = get_genai_client()
+    embeddings: list[list[float]] = []
+
+    batch_size = 100
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+
+        result = client.models.embed_content(
+            model=settings.embedding_model,
+            contents=batch,
+            config=types.EmbedContentConfig(
+                output_dimensionality=settings.embedding_dimensions,
+            ),
+        )
+
+        if result.embeddings:
+            for embedding in result.embeddings:
+                embeddings.append(list(embedding.values or []))
+
+    logger.info(f"Generated {len(embeddings)} text embeddings (sync)")
+    return embeddings
+
+
+def embed_images_sync(image_bytes_list: list[bytes]) -> list[ImageEmbeddingResult]:
+    """Generate multimodal embeddings and captions for a list of images (synchronous).
+
+    Identical to ``embed_images`` but calls the SDK directly without
+    ``asyncio.to_thread``, suitable for use in synchronous background
+    tasks such as the document ingestion pipeline.
+
+    Args:
+        image_bytes_list: List of raw image byte arrays.
+
+    Returns:
+        List of ImageEmbeddingResult (embedding vector + caption).
+        Returns an empty embedding for an image if embedding fails.
+    """
+    if not image_bytes_list:
+        return []
+
+    client = get_genai_client()
+    model = _get_mm_model()
+    results: list[ImageEmbeddingResult] = []
+
+    for img_bytes in image_bytes_list:
+        try:
+            # Write to temp file — VMImage.load_from_file requires a path
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(img_bytes)
+                tmp_path = tmp.name
+            image = VMImage.load_from_file(tmp_path)
+
+            # generate_content is synchronous — call directly
+            caption_response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    types.Part.from_bytes(
+                        data=img_bytes,
+                        mime_type="image/jpeg",
+                    ),
+                    "Caption this image in less than 512 chars.",
+                ],
+            )
+            caption = caption_response.text or ""
+
+            # get_embeddings is synchronous — call directly
+            emb_response = model.get_embeddings(
+                image=image,
+                contextual_text=caption,
+                dimension=settings.image_embedding_dimensions,
+            )
+            results.append(
+                ImageEmbeddingResult(
+                    embedding=emb_response.image_embedding,
+                    caption=caption,
+                )
+            )
+
+            # Clean up temp file
+            Path(tmp_path).unlink(missing_ok=True)
+
+        except Exception:
+            logger.warning(
+                "Failed to embed image (sync), using empty embedding", exc_info=True
+            )
+            results.append(ImageEmbeddingResult())
+            # Clean up on error too
+            try:
+                Path(tmp_path).unlink(missing_ok=True)  # type: ignore[possibly-undefined]
+            except Exception:
+                pass
+
+    logger.info(f"Generated {len(results)} image embeddings (sync)")
+    return results

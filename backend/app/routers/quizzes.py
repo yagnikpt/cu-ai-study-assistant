@@ -43,13 +43,13 @@ async def create_quiz(db: DBSession, space_id: uuid.UUID, body: QuizGenerateRequ
         )
 
     # Validate space exists
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
 
     # Validate document belongs to space if provided
     if body.document_id:
-        doc = await db.get(Document, body.document_id)
+        doc = db.get(Document, body.document_id)
         if not doc or doc.space_id != space_id:
             raise HTTPException(
                 status_code=400,
@@ -73,7 +73,7 @@ async def create_quiz(db: DBSession, space_id: uuid.UUID, body: QuizGenerateRequ
         ) from e
 
     # Re-fetch with questions
-    result = await db.execute(
+    result = db.execute(
         select(Quiz).options(selectinload(Quiz.questions)).where(Quiz.id == quiz.id)
     )
     quiz = result.scalar_one()
@@ -117,10 +117,10 @@ async def list_quizzes(
         query = query.where(Quiz.document_id == document_id)
 
     count_query = select(func.count()).select_from(query.subquery())
-    total = await db.scalar(count_query) or 0
+    total = db.scalar(count_query) or 0
 
     query = query.order_by(Quiz.created_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
+    result = db.execute(query)
     quizzes = result.scalars().all()
 
     return QuizListResponse(
@@ -152,7 +152,7 @@ async def list_quizzes(
 @router.get("/{quiz_id}", response_model=QuizResponse)
 async def get_quiz(db: DBSession, space_id: uuid.UUID, quiz_id: uuid.UUID):
     """Get a quiz with its questions (without answers - for taking the quiz)."""
-    result = await db.execute(
+    result = db.execute(
         select(Quiz).options(selectinload(Quiz.questions)).where(Quiz.id == quiz_id)
     )
     quiz = result.scalar_one_or_none()
@@ -191,7 +191,7 @@ async def submit_attempt(
     - An explanation with source references
     """
     try:
-        result = await grade_attempt(
+        result = grade_attempt(
             db=db,
             quiz_id=quiz_id,
             answers=[a.model_dump() for a in body.answers],
@@ -215,7 +215,7 @@ async def get_results(db: DBSession, space_id: uuid.UUID, quiz_id: uuid.UUID):
     Shows which topics need reinforcement based on past attempts.
     """
     try:
-        result = await get_quiz_results(db=db, quiz_id=quiz_id)
+        result = get_quiz_results(db=db, quiz_id=quiz_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 

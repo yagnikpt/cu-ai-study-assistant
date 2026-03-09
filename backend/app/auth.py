@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import User
@@ -33,7 +33,7 @@ def decode_jwt(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid session")
 
 
-async def get_current_user(request: Request, db: AsyncSession) -> User:
+def get_current_user(request: Request, db: Session) -> User:
     """Extract the current user from the session cookie.
 
     Used as a FastAPI dependency.
@@ -47,7 +47,7 @@ async def get_current_user(request: Request, db: AsyncSession) -> User:
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    user = await db.get(User, uuid.UUID(user_id))
+    user = db.get(User, uuid.UUID(user_id))
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 

@@ -136,7 +136,7 @@ function UploadSection({ spaceId }: { spaceId: string }) {
 		mutationFn: (f: File) =>
 			uploadDocument(spaceId, f),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["documents"] });
+			queryClient.invalidateQueries({ queryKey: ["documents", spaceId] });
 			setFile(null);
 			if (fileInputRef.current) fileInputRef.current.value = "";
 		},
@@ -262,7 +262,7 @@ function DocumentList({ spaceId }: { spaceId: string }) {
 	const [showFilters, setShowFilters] = useState(false);
 
 	const { data, isLoading, isError, error } = useQuery({
-		queryKey: ["documents", filters],
+		queryKey: ["documents", spaceId, filters],
 		queryFn: () => listDocuments(spaceId, filters),
 		refetchInterval: (query) => {
 			const docs = query.state.data?.documents;
@@ -439,7 +439,7 @@ function DocumentRow({ doc, spaceId }: { doc: Document; spaceId: string }) {
 		mutationFn: () => deleteDocument(spaceId, doc.id),
 		onSuccess: () =>
 			setTimeout(
-				() => queryClient.invalidateQueries({ queryKey: ["documents"] }),
+				() => queryClient.invalidateQueries({ queryKey: ["documents", spaceId] }),
 				500,
 			),
 	});
@@ -802,7 +802,7 @@ function TagAssignDialog({
 	const assignMut = useMutation({
 		mutationFn: () => addTagsToDocument(spaceId, doc.id, { tag_ids: selectedTagIds }),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["documents"] });
+			queryClient.invalidateQueries({ queryKey: ["documents", spaceId] });
 			onClose();
 		},
 	});

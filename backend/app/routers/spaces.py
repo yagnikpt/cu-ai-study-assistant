@@ -21,8 +21,8 @@ async def create_space(db: DBSession, user: CurrentUser, body: SpaceCreate):
     """Create a new study space."""
     space = Space(name=body.name, description=body.description, user_id=user.id)
     db.add(space)
-    await db.flush()
-    await db.refresh(space)
+    db.flush()
+    db.refresh(space)
     return SpaceResponse(
         id=space.id,
         name=space.name,
@@ -53,11 +53,11 @@ async def list_spaces(db: DBSession, user: CurrentUser):
         .order_by(Space.updated_at.desc())
     )
 
-    result = await db.execute(query)
+    result = db.execute(query)
     rows = result.all()
 
     total_q = select(func.count()).select_from(Space).where(Space.user_id == user.id)
-    total = await db.scalar(total_q) or 0
+    total = db.scalar(total_q) or 0
 
     return SpaceListResponse(
         spaces=[
@@ -78,11 +78,11 @@ async def list_spaces(db: DBSession, user: CurrentUser):
 @router.get("/{space_id}", response_model=SpaceResponse)
 async def get_space(db: DBSession, user: CurrentUser, space_id: uuid.UUID):
     """Get a single space with its document count."""
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space or space.user_id != user.id:
         raise HTTPException(status_code=404, detail="Space not found")
 
-    doc_count = await db.scalar(
+    doc_count = db.scalar(
         select(func.count()).select_from(Document).where(Document.space_id == space_id)
     )
 
@@ -101,7 +101,7 @@ async def update_space(
     db: DBSession, user: CurrentUser, space_id: uuid.UUID, body: SpaceUpdate
 ):
     """Update space metadata."""
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space or space.user_id != user.id:
         raise HTTPException(status_code=404, detail="Space not found")
 
@@ -110,10 +110,10 @@ async def update_space(
     if body.description is not None:
         space.description = body.description
 
-    await db.flush()
-    await db.refresh(space)
+    db.flush()
+    db.refresh(space)
 
-    doc_count = await db.scalar(
+    doc_count = db.scalar(
         select(func.count()).select_from(Document).where(Document.space_id == space_id)
     )
 
@@ -130,9 +130,9 @@ async def update_space(
 @router.delete("/{space_id}", status_code=204)
 async def delete_space(db: DBSession, user: CurrentUser, space_id: uuid.UUID):
     """Delete a space and all its documents, quizzes, chunks, and embeddings."""
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space or space.user_id != user.id:
         raise HTTPException(status_code=404, detail="Space not found")
 
-    await db.delete(space)
-    await db.flush()
+    db.delete(space)
+    db.flush()

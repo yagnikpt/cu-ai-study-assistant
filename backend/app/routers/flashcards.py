@@ -45,13 +45,13 @@ async def create_flashcard_deck(
         )
 
     # Validate space exists
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
 
     # Validate document belongs to space if provided
     if body.document_id:
-        doc = await db.get(Document, body.document_id)
+        doc = db.get(Document, body.document_id)
         if not doc or doc.space_id != space_id:
             raise HTTPException(
                 status_code=400,
@@ -74,7 +74,7 @@ async def create_flashcard_deck(
         ) from e
 
     # Re-fetch with cards
-    result = await db.execute(
+    result = db.execute(
         select(FlashcardDeck)
         .options(selectinload(FlashcardDeck.cards))
         .where(FlashcardDeck.id == deck.id)
@@ -121,10 +121,10 @@ async def list_flashcard_decks(
         query = query.where(FlashcardDeck.document_id == document_id)
 
     count_query = select(func.count()).select_from(query.subquery())
-    total = await db.scalar(count_query) or 0
+    total = db.scalar(count_query) or 0
 
     query = query.order_by(FlashcardDeck.created_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
+    result = db.execute(query)
     decks = result.scalars().all()
 
     return FlashcardDeckListResponse(
@@ -157,7 +157,7 @@ async def list_flashcard_decks(
 @router.get("/{deck_id}", response_model=FlashcardDeckResponse)
 async def get_flashcard_deck(db: DBSession, space_id: uuid.UUID, deck_id: uuid.UUID):
     """Get a flashcard deck with all its cards."""
-    result = await db.execute(
+    result = db.execute(
         select(FlashcardDeck)
         .options(selectinload(FlashcardDeck.cards))
         .where(FlashcardDeck.id == deck_id)
@@ -196,12 +196,12 @@ async def submit_reviews(
     Ratings: again, hard, good, easy
     """
     # Validate deck belongs to space
-    deck = await db.get(FlashcardDeck, deck_id)
+    deck = db.get(FlashcardDeck, deck_id)
     if not deck or deck.space_id != space_id:
         raise HTTPException(status_code=404, detail="Deck not found in this space")
 
     try:
-        count = await record_reviews(
+        count = record_reviews(
             db=db,
             deck_id=deck_id,
             reviews=[r.model_dump() for r in body.reviews],
@@ -219,12 +219,12 @@ async def get_stats(db: DBSession, space_id: uuid.UUID, deck_id: uuid.UUID):
     Shows per-card review counts and rating breakdowns.
     """
     # Validate deck belongs to space
-    deck = await db.get(FlashcardDeck, deck_id)
+    deck = db.get(FlashcardDeck, deck_id)
     if not deck or deck.space_id != space_id:
         raise HTTPException(status_code=404, detail="Deck not found in this space")
 
     try:
-        result = await get_deck_stats(db=db, deck_id=deck_id)
+        result = get_deck_stats(db=db, deck_id=deck_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -242,9 +242,9 @@ async def get_stats(db: DBSession, space_id: uuid.UUID, deck_id: uuid.UUID):
 @router.delete("/{deck_id}", status_code=204)
 async def delete_flashcard_deck(db: DBSession, space_id: uuid.UUID, deck_id: uuid.UUID):
     """Delete a flashcard deck and all its cards and reviews."""
-    deck = await db.get(FlashcardDeck, deck_id)
+    deck = db.get(FlashcardDeck, deck_id)
     if not deck or deck.space_id != space_id:
         raise HTTPException(status_code=404, detail="Deck not found in this space")
 
-    await db.delete(deck)
-    await db.flush()
+    db.delete(deck)
+    db.flush()

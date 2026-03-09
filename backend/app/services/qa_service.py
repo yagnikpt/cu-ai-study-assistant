@@ -16,7 +16,7 @@ from app.services.genai_client import get_genai_client
 from app.services.embeddings import embed_query, embed_query_multimodal
 from app.services.vector_search import search_similar_chunks, search_similar_images
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ def _build_source_context(chunks: list[dict]) -> str:
 
 
 async def _retrieve_and_build_prompt(
-    db: AsyncSession,
+    db: Session,
     question: str,
     document_ids: list[uuid.UUID] | None = None,
     top_k: int = 5,
@@ -147,7 +147,7 @@ async def _retrieve_and_build_prompt(
     # Run text and image embedding in parallel conceptually
     # (both are fast network calls)
     query_embedding = await embed_query(question)
-    chunks = await search_similar_chunks(
+    chunks = search_similar_chunks(
         db=db,
         query_embedding=query_embedding,
         top_k=top_k,
@@ -158,7 +158,7 @@ async def _retrieve_and_build_prompt(
     image_results: list[dict] = []
     try:
         mm_embedding = await embed_query_multimodal(question)
-        image_results = await search_similar_images(
+        image_results = search_similar_images(
             db=db,
             query_embedding=mm_embedding,
             top_k=3,
@@ -185,7 +185,7 @@ Provide a clear, well-structured answer. Embed relevant images inline using the 
 
 
 async def ask_question(
-    db: AsyncSession,
+    db: Session,
     question: str,
     document_ids: list[uuid.UUID] | None = None,
     top_k: int = 5,
@@ -193,7 +193,7 @@ async def ask_question(
     """Answer a question using RAG: retrieve relevant chunks, then generate.
 
     Args:
-        db: Async database session.
+        db: Database session.
         question: The user's question.
         document_ids: Optional filter to specific documents.
         top_k: Number of chunks to retrieve for context.
@@ -236,7 +236,7 @@ async def ask_question(
 
 
 async def ask_question_stream(
-    db: AsyncSession,
+    db: Session,
     question: str,
     document_ids: list[uuid.UUID] | None = None,
     top_k: int = 5,

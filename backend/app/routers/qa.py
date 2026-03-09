@@ -23,12 +23,12 @@ from app.services.vector_search import search_similar_chunks
 router = APIRouter(prefix="/api/v1/spaces/{space_id}/qa", tags=["qa"])
 
 
-async def _get_space_doc_ids(db, space_id: uuid.UUID) -> list[uuid.UUID]:
+def _get_space_doc_ids(db, space_id: uuid.UUID) -> list[uuid.UUID]:
     """Get all document IDs belonging to a space."""
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
-    result = await db.execute(
+    result = db.execute(
         select(Document.id).where(
             Document.space_id == space_id, Document.status == "ready"
         )
@@ -49,7 +49,7 @@ async def ask(db: DBSession, space_id: uuid.UUID, body: AskRequest):
     If not provided, all documents in this space are searched.
     """
     # Scope to this space's documents
-    space_doc_ids = await _get_space_doc_ids(db, space_id)
+    space_doc_ids = _get_space_doc_ids(db, space_id)
     if not space_doc_ids:
         raise HTTPException(
             status_code=400,
@@ -98,7 +98,7 @@ async def ask_stream(db: DBSession, space_id: uuid.UUID, body: AskRequest):
       - `token`: JSON string with a text fragment (many times)
       - `done`: JSON object with `model` field (sent last)
     """
-    space_doc_ids = await _get_space_doc_ids(db, space_id)
+    space_doc_ids = _get_space_doc_ids(db, space_id)
     if not space_doc_ids:
         raise HTTPException(
             status_code=400,
@@ -140,7 +140,7 @@ async def semantic_search(db: DBSession, space_id: uuid.UUID, body: SearchReques
     Returns the most relevant passages without generating an answer.
     Useful for exploring what's in your knowledge base.
     """
-    space_doc_ids = await _get_space_doc_ids(db, space_id)
+    space_doc_ids = _get_space_doc_ids(db, space_id)
     if not space_doc_ids:
         raise HTTPException(
             status_code=400,
@@ -160,7 +160,7 @@ async def semantic_search(db: DBSession, space_id: uuid.UUID, body: SearchReques
 
     try:
         query_embedding = await embed_query(body.query)
-        results = await search_similar_chunks(
+        results = search_similar_chunks(
             db=db,
             query_embedding=query_embedding,
             top_k=body.top_k,

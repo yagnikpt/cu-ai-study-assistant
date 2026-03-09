@@ -8,7 +8,7 @@ import logging
 import uuid
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk, DocumentImage
 from app.services.storage import get_public_url
@@ -16,8 +16,8 @@ from app.services.storage import get_public_url
 logger = logging.getLogger(__name__)
 
 
-async def search_similar_chunks(
-    db: AsyncSession,
+def search_similar_chunks(
+    db: Session,
     query_embedding: list[float],
     top_k: int = 5,
     document_ids: list[uuid.UUID] | None = None,
@@ -28,7 +28,7 @@ async def search_similar_chunks(
     Uses cosine distance via pgvector's <=> operator with the HNSW index.
 
     Args:
-        db: Async database session.
+        db: Database session.
         query_embedding: The query embedding vector (768-dim).
         top_k: Number of results to return.
         document_ids: Optional filter to specific documents.
@@ -65,7 +65,7 @@ async def search_similar_chunks(
     # Order by cosine distance (ascending = most similar first)
     query = query.order_by(text("distance")).limit(top_k)
 
-    result = await db.execute(query)
+    result = db.execute(query)
     rows = result.all()
 
     results = []
@@ -91,8 +91,8 @@ async def search_similar_chunks(
     return results
 
 
-async def search_similar_images(
-    db: AsyncSession,
+def search_similar_images(
+    db: Session,
     query_embedding: list[float],
     top_k: int = 3,
     document_ids: list[uuid.UUID] | None = None,
@@ -104,7 +104,7 @@ async def search_similar_images(
     on the 1408-dim multimodal embeddings.
 
     Args:
-        db: Async database session.
+        db: Database session.
         query_embedding: The query embedding vector (1408-dim).
         top_k: Number of results to return.
         document_ids: Optional filter to specific documents.
@@ -134,7 +134,7 @@ async def search_similar_images(
 
     query = query.order_by(text("distance")).limit(top_k)
 
-    result = await db.execute(query)
+    result = db.execute(query)
     rows = result.all()
 
     results = []

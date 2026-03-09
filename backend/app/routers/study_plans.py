@@ -54,7 +54,7 @@ async def create_study_plan(
     body: StudyPlanGenerateRequest,
 ):
     """Generate a study plan from space documents using AI."""
-    space = await db.get(Space, space_id)
+    space = db.get(Space, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
 
@@ -70,7 +70,7 @@ async def create_study_plan(
         raise HTTPException(status_code=400, detail=str(e))
 
     # Reload with topics
-    await db.refresh(plan, ["topics"])
+    db.refresh(plan, ["topics"])
     return _plan_response(plan)
 
 
@@ -83,7 +83,7 @@ async def list_study_plans(db: DBSession, space_id: uuid.UUID):
         .where(StudyPlan.space_id == space_id)
         .order_by(StudyPlan.created_at.desc())
     )
-    result = await db.execute(query)
+    result = db.execute(query)
     plans = list(result.scalars().all())
 
     return StudyPlanListResponse(
@@ -100,7 +100,7 @@ async def get_study_plan(db: DBSession, space_id: uuid.UUID, plan_id: uuid.UUID)
         .options(selectinload(StudyPlan.topics))
         .where(StudyPlan.id == plan_id, StudyPlan.space_id == space_id)
     )
-    result = await db.execute(query)
+    result = db.execute(query)
     plan = result.scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Study plan not found")
@@ -118,28 +118,28 @@ async def toggle_topic_completion(
 ):
     """Toggle a topic's completion status."""
     # Verify plan belongs to space
-    plan = await db.get(StudyPlan, plan_id)
+    plan = db.get(StudyPlan, plan_id)
     if not plan or plan.space_id != space_id:
         raise HTTPException(status_code=404, detail="Study plan not found")
 
-    topic = await db.get(StudyTopic, topic_id)
+    topic = db.get(StudyTopic, topic_id)
     if not topic or topic.plan_id != plan_id:
         raise HTTPException(status_code=404, detail="Topic not found")
 
     topic.completed = body.completed
     topic.completed_at = datetime.now(timezone.utc) if body.completed else None
 
-    await db.flush()
-    await db.refresh(topic)
+    db.flush()
+    db.refresh(topic)
     return StudyTopicResponse.model_validate(topic)
 
 
 @router.delete("/{plan_id}", status_code=204)
 async def delete_study_plan(db: DBSession, space_id: uuid.UUID, plan_id: uuid.UUID):
     """Delete a study plan and all its topics."""
-    plan = await db.get(StudyPlan, plan_id)
+    plan = db.get(StudyPlan, plan_id)
     if not plan or plan.space_id != space_id:
         raise HTTPException(status_code=404, detail="Study plan not found")
 
-    await db.delete(plan)
-    await db.flush()
+    db.delete(plan)
+    db.flush()

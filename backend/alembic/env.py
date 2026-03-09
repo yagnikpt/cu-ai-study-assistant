@@ -9,8 +9,8 @@ from app.config import settings
 # access to the values within the .ini file in use.
 config = context.config
 
-# Set the sqlalchemy URL from our app config (sync version for Alembic)
-config.set_main_option("sqlalchemy.url", settings.sync_database_url)
+# Set the sqlalchemy URL from our app config
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

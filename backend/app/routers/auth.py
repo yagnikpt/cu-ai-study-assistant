@@ -104,10 +104,12 @@ async def github_callback(db: DBSession, code: str | None = None):
     if not email:
         email = gh_user.get("email")
     avatar_url = gh_user.get("avatar_url")
+    print(email, github_id)
 
     # Step 3: Upsert user
-    result = await db.execute(select(User).where(User.github_id == github_id))
+    result = db.execute(select(User).where(User.github_id == github_id))
     user = result.scalar_one_or_none()
+    print(user)
 
     if user:
         # Update profile fields
@@ -123,8 +125,8 @@ async def github_callback(db: DBSession, code: str | None = None):
         )
         db.add(user)
 
-    await db.flush()
-    await db.refresh(user)
+    db.flush()
+    db.refresh(user)
 
     logger.info(f"User authenticated: {username} (github_id={github_id})")
 
@@ -151,7 +153,7 @@ async def github_callback(db: DBSession, code: str | None = None):
 @router.get("/api/v1/auth/me", response_model=UserResponse)
 async def get_me(request: Request, db: DBSession):
     """Get the currently authenticated user."""
-    user = await get_current_user(request, db)
+    user = get_current_user(request, db)
     return UserResponse.model_validate(user)
 
 

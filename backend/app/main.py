@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Shutdown
     from app.database import engine
 
-    await engine.dispose()
+    engine.dispose()
     logger.info("AI Study Assistant API shut down")
 
 
@@ -94,8 +94,8 @@ async def health():
     from app.database import engine
 
     try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
         db_status = f"error: {e}"
