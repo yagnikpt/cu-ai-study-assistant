@@ -1,6 +1,7 @@
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from alembic import context
 from app.config import settings
@@ -9,8 +10,25 @@ from app.config import settings
 # access to the values within the .ini file in use.
 config = context.config
 
-# Set the sqlalchemy URL from our app config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+
+def _sync_alembic_url(database_url: str) -> str:
+    """Convert async SQLAlchemy URLs to sync drivers for Alembic."""
+    url = make_url(database_url)
+
+    driver_map = {
+        "postgresql+asyncpg": "postgresql+psycopg2",
+        "postgresql+psycopg": "postgresql+psycopg2",
+        "sqlite+aiosqlite": "sqlite",
+    }
+    sync_driver = driver_map.get(url.drivername)
+    if sync_driver:
+        url = url.set(drivername=sync_driver)
+
+    return url.render_as_string(hide_password=False)
+
+
+# Set the sqlalchemy URL from our app config (forcing a sync driver for Alembic)
+config.set_main_option("sqlalchemy.url", _sync_alembic_url(settings.database_url))
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

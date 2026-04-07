@@ -1,6 +1,7 @@
 """GitHub OAuth authentication router."""
 
 import logging
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -34,7 +35,7 @@ async def github_login():
         "client_id": settings.github_client_id,
         "scope": "read:user user:email",
     }
-    url = f"{GITHUB_AUTHORIZE_URL}?{'&'.join(f'{k}={v}' for k, v in params.items())}"
+    url = f"{GITHUB_AUTHORIZE_URL}?{urlencode(params)}"
     return RedirectResponse(url=url)
 
 
@@ -104,12 +105,9 @@ async def github_callback(db: DBSession, code: str | None = None):
     if not email:
         email = gh_user.get("email")
     avatar_url = gh_user.get("avatar_url")
-    print(email, github_id)
-
     # Step 3: Upsert user
     result = db.execute(select(User).where(User.github_id == github_id))
     user = result.scalar_one_or_none()
-    print(user)
 
     if user:
         # Update profile fields
